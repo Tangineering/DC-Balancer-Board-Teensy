@@ -1,5 +1,8 @@
 # Charger EVM r8: design state after the 2026-11-12 decisions
 
+**Superseded 2026-11-14 (REVIEW DOC-10) by `LAYOUT_DECISIONS.md` section 1; for example, U101 is the TCKE1401NM
+since D-67, not the TPS26630RGER. This document stays the record of the 2026-11-12 state.**
+
 ## 1. Purpose
 
 This document records the operator decisions of 2026-11-12, the ramifications of the tap review, and the

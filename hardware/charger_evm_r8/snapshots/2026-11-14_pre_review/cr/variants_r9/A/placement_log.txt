@@ -1,0 +1,81 @@
+packer: best try 0 placed 1 of 1, cost 4.9
+J102   F jtap         (59.829, 11.400) rot 90  target (66.50, 16.41)
+phase J-TAP done
+packer: best try 0 placed 7 of 7, cost 0.0
+U102   F int_analog   (21.209, 32.375) rot 0  target -
+U103   F int_analog   (25.459, 32.375) rot 0  target -
+U119   F int_analog   (29.709, 32.375) rot 0  target -
+U120   F int_analog   (33.959, 32.375) rot 0  target -
+D104   F int_analog   (38.084, 32.375) rot 0  target -
+D105   F int_analog   (24.284, 35.525) rot 0  target -
+D106   F int_analog   (28.284, 35.525) rot 0  target -
+phase analog ICs done
+packer: best try 0 placed 6 of 6, cost 0.0
+R109   F div          (27.134, 43.125) rot 0  target -
+R111   F div          (30.534, 43.125) rot 0  target -
+R114   F div          (33.934, 43.125) rot 0  target -
+R110   F div          (27.534, 44.850) rot 0  target -
+R112   F div          (30.534, 44.850) rot 0  target -
+R115   F div          (33.534, 44.850) rot 0  target -
+phase dividers done
+packer: best try 0 placed 5 of 5, cost 13.5
+U105   F int_logic    (25.059, 48.925) rot 0  target (24.78, 48.90)
+U106   F int_logic    (27.909, 52.375) rot 0  target (24.78, 48.90)
+U107   F int_logic    (31.859, 36.075) rot 90  target (28.57, 33.33)
+U110   F int_logic    (21.859, 9.225) rot 0  target -
+U118   F int_logic    (25.759, 29.075) rot 0  target (25.74, 33.33)
+phase logic ICs done
+packer: best try 0 placed 9 of 9, cost 24.0
+C110   F int_analog_wide (23.734, 37.900) rot 0  target (22.35, 33.33)
+C111   F int_analog_wide (26.834, 37.900) rot 0  target (26.60, 33.33)
+C114   F int_logic    (28.634, 49.100) rot 90  target (26.96, 49.90)
+C115   F int_logic    (29.834, 54.900) rot 0  target (29.81, 53.35)
+C116   F int_logic    (31.834, 39.000) rot 0  target (31.86, 37.21)
+C119   F int_logic    (23.784, 11.750) rot 0  target (23.76, 10.20)
+C126   F int_logic    (29.334, 29.250) rot 90  target (27.66, 30.05)
+C131   F int_analog_wide (34.234, 35.500) rot 90  target (30.85, 33.33)
+C132   F int_analog_wide (36.584, 34.750) rot 0  target (35.10, 33.33)
+phase decouplers done
+packer: best try 135 placed 14 of 14, cost 147.3
+C106   F int_analog   (29.184, 38.650) rot 90  target (28.46, 37.94)
+C107   F int_analog   (26.834, 39.500) rot 0  target (27.18, 38.73)
+C108   F int_analog   (31.534, 40.600) rot 0  target (30.27, 38.73)
+C129   F int_analog   (39.134, 35.500) rot 90  target (59.83, 14.40)
+C130   F int_analog   (29.384, 46.500) rot 0  target (28.57, 31.42)
+R113   F int_analog   (24.484, 40.250) rot 90  target (26.30, 35.86)
+R116   F int_analog   (28.234, 41.100) rot 0  target (28.21, 36.28)
+R129   F int_analog   (38.734, 40.000) rot 90  target (51.39, 40.01)
+R184   F int_analog   (34.984, 37.850) rot 0  target (29.71, 31.90)
+R185   F int_analog   (34.934, 39.450) rot 0  target (28.57, 31.42)
+R186   F int_analog   (34.634, 41.050) rot 0  target (30.85, 31.42)
+R187   F int_analog   (32.484, 46.500) rot 0  target (30.85, 31.42)
+R188   F int_analog   (34.834, 47.250) rot 90  target (32.82, 31.42)
+R189   F int_analog   (32.484, 48.100) rot 0  target (32.82, 31.42)
+phase analog passives done
+phase lead pads: W6 has a B courtyard; packed against both sides
+packer: best try 0 placed 2 of 2, cost 5.7
+W6     F int_logic    (23.809, 59.845) rot 90  target (21.00, 59.40)
+W7     F int_logic    (48.809, 55.615) rot 90  target (46.00, 55.59)
+phase lead pads done
+packer: best try 52 placed 20 of 20, cost 63.8
+C101   F int_logic    (42.234, 67.550) rot 0  target (43.66, 63.40)
+C125   F int_logic    (26.409, 8.550) rot 0  target -
+R101   F int_logic    (45.334, 67.950) rot 0  target (43.66, 63.90)
+R103   F int_logic    (48.084, 60.950) rot 90  target (43.39, 60.92)
+R104   F int_logic    (49.684, 62.400) rot 90  target (43.66, 62.40)
+R105   F int_logic    (34.784, 52.400) rot 90  target (40.84, 52.39)
+R106s  F int_logic    (52.634, 43.000) rot 0  target (52.64, 43.01)
+R107   F int_logic    (48.084, 46.750) rot 90  target (44.32, 46.77)
+R108   F int_logic    (23.234, 52.350) rot 90  target (23.39, 55.48)
+R122   F int_logic    (42.834, 35.950) rot 0  target (42.82, 35.96)
+R123   F int_logic    (31.684, 30.000) rot 0  target (30.91, 34.94)
+R126   F int_logic    (34.034, 29.250) rot 90  target (32.06, 31.55)
+R130   F int_logic    (34.184, 50.050) rot 0  target (34.19, 50.40)
+R131A  F int_logic    (28.934, 26.550) rot 0  target (29.26, 27.87)
+R131B  F int_logic    (31.284, 27.650) rot 90  target (31.30, 27.87)
+R132   F int_logic    (31.584, 50.450) rot 90  target (34.32, 48.81)
+R147   F int_logic    (46.884, 29.150) rot 0  target (46.87, 29.17)
+R175   F int_logic    (55.784, 11.400) rot 90  target (62.83, 11.40)
+R176   F int_logic    (33.184, 52.400) rot 90  target (38.56, 50.64)
+R177   F int_logic    (48.084, 50.300) rot 90  target (42.63, 50.64)
+phase other parts done

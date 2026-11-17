@@ -1121,7 +1121,7 @@ z
    </g>
    <g id="text_24">
     <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(589.4225 351.471875)">eFuse U101</text>
-    <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(575.33625 360.671875)">TPS26630 + D103</text>
+    <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(567.83625 360.671875)">TCKE1401NM + D103</text>
    </g>
    <g id="text_25">
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #b03a2e" x="753.624" y="142.515891" transform="rotate(-0 753.624 142.515891)">VCHGOUT</text>
@@ -1225,8 +1225,8 @@ z
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #1f5fad" x="835.92" y="537.795891" transform="rotate(-0 835.92 537.795891)">STAT</text>
    </g>
    <g id="text_52">
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(816.324922 666.534828)">W5 14-way</text>
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(809.497187 674.958891)">ribbon (4 GND)</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(811.272344 667.320687)">W5 nine wires</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(801.325234 674.692562)">(3 x 3 pads, 2 GND)</text>
    </g>
    <g id="text_53">
     <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(909.650625 597.71625)">EIB</text>
@@ -1342,7 +1342,7 @@ z
     <text style="font-size: 8px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(28.512 601.366375)">T7b, T17r shields</text>
    </g>
    <g id="text_66">
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1f5fad" transform="translate(219.805234 625.033562)">10 tap conductors, cable Molex 2147581101</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1f5fad" transform="translate(201.326875 625.033562)">10 tap conductors, Micro-Fit mate from workshop stock</text>
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1f5fad" transform="translate(222.34 633.083562)">Teensy headers: T5, T6, T10, T13, T16, T17</text>
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1f5fad" transform="translate(220.658906 641.133562)">(T13, T16, T17 are readbacks to the Teensy)</text>
    </g>

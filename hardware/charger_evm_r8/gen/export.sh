@@ -19,6 +19,10 @@ LAYERS="$CU,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
 "$K" sch erc --format report --severity-all --exit-code-violations -o "$O/reports/erc.rpt" "$SCH" >/dev/null \
   || "$K" sch erc --format report --severity-all --exit-code-violations -o "$O/reports/erc.rpt" "$SCH" >/dev/null
 "$K" pcb drc --format report --severity-all --schematic-parity --exit-code-violations -o "$O/reports/drc.rpt" "$PCB" >/dev/null
+# NPTH gate (REVIEW_2026-11-14 CRL-8): OSH Park plates a hole when copper lies under the drill and leaves it unplated
+# when none does (docs.oshpark.com, "Ensuring plated holes", read 2026-11-14); the kikit_oshpark drill file below
+# merges PTH and NPTH (MixedPlating), so every NPTH hole must be free of copper. Fails the export otherwise.
+"$VENV/python.exe" gen/npth_check.py "$PCB" "$O/reports/npth_check.txt" >/dev/null
 
 # fabrication
 "$K" pcb export gerbers --layers "$LAYERS" --subtract-soldermask -o "$O/gerbers/" "$PCB" >/dev/null
@@ -45,7 +49,10 @@ INTERACTIVE_HTML_BOM_CLI_MODE=1 INTERACTIVE_HTML_BOM_NO_DISPLAY=1 "$VENV/generat
 "$K" pcb export step --subst-models --force -o "$O/docs/${B}.step" "$PCB" >/dev/null 2>&1 || echo "step FAILED"
 "$K" sch export netlist --format kicadsexpr -o "$O/docs/${B}.net" "$SCH" >/dev/null
 
-# KiKit fab presets (TOOLCHAIN 3.8)
+# KiKit fab presets (TOOLCHAIN 3.8). OSH Park upload = kikit_oshpark: one Excellon file with PTH and NPTH merged
+# (OSH Park's drill troubleshooting page reports that a zip with several drill files is sometimes not detected
+# correctly, so the single merged file is kept). The NonPlated tags in that file are informational: plating follows
+# the copper, which the npth_check.py gate above guarantees. drill/ keeps the separate PTH / NPTH files for other fabs.
 "$VENV/kikit.exe" fab jlcpcb --drc --assembly --missingWarn --field MPN --schematic "$SCH" "$PCB" "$O/kikit_jlcpcb" >/dev/null 2>"$O/reports/kikit_jlcpcb.log" || echo "kikit jlcpcb FAILED"
 "$VENV/kikit.exe" fab pcbway --drc --assembly --schematic "$SCH" --manufacturer Manufacturer --partNumber MPN "$PCB" "$O/kikit_pcbway" >/dev/null 2>"$O/reports/kikit_pcbway.log" || echo "kikit pcbway FAILED"
 "$VENV/kikit.exe" fab oshpark --drc "$PCB" "$O/kikit_oshpark" >/dev/null 2>"$O/reports/kikit_oshpark.log" || echo "kikit oshpark FAILED"

@@ -22,6 +22,7 @@
     (effects (font (size 1 1) (thickness 0.15)))
   )
   (fp_rect (start -3.5 -1.75) (end 3.5 1.75) (layer "F.CrtYd") (width 0.12))
+  (fp_line (start -3.45 -0.9) (end -3.45 0.9) (layer "F.SilkS") (width 0.15))
   (pad "1" smd roundrect (at -2 0) (size 2.5 1.8) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1388888889))
   (pad "2" smd roundrect (at 2 0) (size 2.5 1.8) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1388888889))
   (model "${KICAD9_3DMODEL_DIR}/Diode_SMD.3dshapes/D_SMA.step"

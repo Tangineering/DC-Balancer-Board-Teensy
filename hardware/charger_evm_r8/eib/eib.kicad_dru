@@ -73,6 +73,7 @@
 
 # D-68 (operator ruling 2026-11-13: "Widen clearance"): the AGND pours keep 0.5 mm from the hand-soldered E lead pads
 # (E1-E8, other nets only; E8 is AGND itself). Pours only: tracks and other items keep the fab rules above.
+# REVIEW_2026-11-14 EIL-0: the same 0.5 mm pour clearance also holds for the J201 W5 wire pads (D-66, hand-soldered leads).
 (rule "eib_E_pad_pour_clearance"
   (constraint clearance (min 0.5mm))
-  (condition "A.Type == 'Zone' && B.memberOfFootprint('E*')"))
+  (condition "A.Type == 'Zone' && (B.memberOfFootprint('E*') || B.memberOfFootprint('J201'))"))

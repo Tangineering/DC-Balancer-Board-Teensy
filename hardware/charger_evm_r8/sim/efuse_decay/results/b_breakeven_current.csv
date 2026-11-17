@@ -1,0 +1,19 @@
+dwell_s,V0_V,node,min_total_constant_current_mA
+0.5,16.00,LATCHED_ISO Cin 28.4u,0.0557
+0.5,16.00,ON Cin 28.4u + Cevm 51.4u,0.4663
+0.5,16.00,ON Cin 28.4u + Cevm 20.6u,0.2198
+0.5,19.38,LATCHED_ISO Cin 28.4u,0.2276
+0.5,19.38,ON Cin 28.4u + Cevm 51.4u,0.9852
+0.5,19.38,ON Cin 28.4u + Cevm 20.6u,0.5304
+0.5,22.28,LATCHED_ISO Cin 28.4u,0.3751
+0.5,22.28,ON Cin 28.4u + Cevm 51.4u,1.4304
+0.5,22.28,ON Cin 28.4u + Cevm 20.6u,0.7969
+1.5,16.00,LATCHED_ISO Cin 28.4u,0.0000
+1.5,16.00,ON Cin 28.4u + Cevm 51.4u,0.0413
+1.5,16.00,ON Cin 28.4u + Cevm 20.6u,0.0000
+1.5,19.38,LATCHED_ISO Cin 28.4u,0.0000
+1.5,19.38,ON Cin 28.4u + Cevm 51.4u,0.2012
+1.5,19.38,ON Cin 28.4u + Cevm 20.6u,0.0505
+1.5,22.28,LATCHED_ISO Cin 28.4u,0.0000
+1.5,22.28,ON Cin 28.4u + Cevm 51.4u,0.3383
+1.5,22.28,ON Cin 28.4u + Cevm 20.6u,0.1284

@@ -190,11 +190,16 @@ reads 1.80 V at the node while firmware reads 1.52 V). True V-MOT is then readin
   design trip, which the case-B true peaks would have exceeded by 1.6-1.8 V):
   1. **No conduction signature.** Taking the old 19.91 V level as the worked example, the dump
      would take 19.91 / 47 = 0.42 A (0.46-0.47 A at 21.5-22.1 V) as soon as it turned on.
-     V-MOT capacitance is at least 480 uF (CAL + C-D6) and at most about 1.4 mF:
-     the ML0215-ML0217 dark-node decay time constant of 105-122 s, divided by the 88.7 kOhm
-     divider alone, bounds it from above, and every other load only lowers that estimate. So
-     the rise rate would have dropped by at least 0.30 V/ms true (0.25 V/ms in reading units)
-     within a sample or two of crossing a reading of 19.91 x 0.846 = 16.85 V. Observed: YP0196
+     V-MOT capacitance is at least about 1.2 mF: the ML0215-ML0217 dark-node decay time
+     constant of 105-122 s, divided by the 88.7 kOhm divider alone, gives 1.18-1.38 mF. Every
+     other load on the node lowers the effective resistance, so the true capacitance can only
+     be higher; this figure is a lower bound. (Corrected 2026-11-16: an earlier revision stated
+     it as an upper bound.) The upper limit is weak: about 5 mF
+     (`docs/reviews/charger_eval_2026-11-05/round2/regen_dynamics.md` section 2; not
+     measured, M-R1). Across 1.2-5 mF, the rise rate would have dropped by 0.36-0.084 V/ms
+     true (0.30-0.071 V/ms in reading units) within a sample or two of crossing a reading of
+     19.91 x 0.846 = 16.85 V. The drop at the high end of the range is comparable to the
+     slope noise, so the slope reversals below carry the argument there. Observed: YP0196
      *speeds up* through 16.4-16.9 V (0.09 -> 0.14 V/ms). YP0198 continues at 0.05-0.11 V/ms.
      ML0151's slope eases from 0.32 to 0.12 V/ms over 16.5-17.5 V and then **rises back to
      0.20 V/ms at the 18.2 V peak**, which is not possible with 0.42-0.46 A leaving through a

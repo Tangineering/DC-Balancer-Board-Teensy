@@ -206,10 +206,14 @@ def rows():
         r.append(dict(rule=rule, item=item, measured=measured, limit=limit,
                       result="pass" if ok is True else ("FAIL" if ok is False else ok)))
 
-    # H.23(a) successor: the outline
-    row("H.23(a) successor: plug-on outline (D-39)", "Edge.Cuts", "4 vertices, %.3f x %.3f mm, area %.2f mm2, "
+    # H.23(a) successor: the D-39 placement frame. Phase C (2026-11-15, REVIEW2 R2-CRL-6): the row reports the D-39
+    # constant P of this file, not the board's Edge.Cuts (the board outline is the D-62 row below and the constraint
+    # check's Edge.Cuts row), so it is labelled as a constant and reported as information. Superseded labels:
+    # rule "H.23(a) successor: plug-on outline (D-39)", item "Edge.Cuts", result "pass".
+    row("H.23(a) successor: D-39 placement frame (constant of gen/cr_geometry.py, history; the board outline is the D-62 "
+        "row)", "D-39 constant P (not Edge.Cuts)", "4 vertices, %.3f x %.3f mm, area %.2f mm2, "
         "KiCad Y %.2f-%.2f" % (X1 - X0, Y1 - Y0, P.area, YOFF - Y1, YOFF - Y0), "48.416 x 87.000 mm, 4212.19 mm2",
-        abs(P.area - 48.416 * 87.0) < 0.01 and len(OUTLINE) == 4)
+        "info" if abs(P.area - 48.416 * 87.0) < 0.01 and len(OUTLINE) == 4 else False)
     row("H.23(a) successor: courtyard inset 0.5 mm (A.8)", "INSET", "%.2f mm2" % INSET.area, "information", "info")
     # D-60 (route-race R9-02): the final outline after routing, inside the D-39 placement frame, and the holes
     convex = abs(P_CORNERS.convex_hull.area - P_CORNERS.area) < 1e-6

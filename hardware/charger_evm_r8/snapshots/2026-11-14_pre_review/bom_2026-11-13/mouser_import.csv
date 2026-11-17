@@ -1,0 +1,5 @@
+Mouser Part Number,Manufacturer Part Number,Manufacturer,Description,Quantity,Customer Part Number,Reference Designators,BOM Quantity,"Unit Price (qty 1, 2026-11-13)"
+71-CRCW0603-8.45K-E3,CRCW06038K45FKEA,Vishay Dale,8.45 kOhm 1 % 0603 (U101 ILIM),10,CR R101,CR: R101,1,0.10
+667-ERA-3AEB6492V,ERA-3AEB6492V,Panasonic Industry,64.9 kOhm 0.1 % 25 ppm/K 0603 thin film,10,CR R103,CR: R103,1,0.10
+71-TNPW060351K1BEEA,TNPW060351K1BEEA,Vishay Dale,51.1 kOhm 0.1 % 25 ppm/K 0603 thin film,3,CR R104,CR: R104,1,0.26
+757-TCKE1401NMR1F,"TCKE1401NM,R1F",Toshiba,"eFuse 4.7-75 V (80 V abs max), 44.5 mOhm, 6 A, adjustable OVP/UVLO/ILIM, IMON, FLAG, latch-off; VQFN24D 4 x 4 mm, 0.5 mm",1,CR U101,CR: U101,1,4.61

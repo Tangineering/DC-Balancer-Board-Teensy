@@ -1,0 +1,5 @@
+charger,v_power_exceeds_25A_mps,first_v0_ovp_25A_04mF_leak_mps,p_25A_at_3mps_W,p_25A_at_2p5mps_W,vesc_cap_at_vindpm_W
+lo,2.392,2.51,28.803,20.577,29.07
+nom,2.5706,2.699,28.803,20.577,28.5
+d310,2.5719,2.7,28.803,20.577,28.5
+hi,2.9912,,28.803,20.577,27.93

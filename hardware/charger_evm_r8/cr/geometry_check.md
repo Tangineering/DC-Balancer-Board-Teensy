@@ -4,16 +4,22 @@ Source: `references/Scale Car Board PCB 20260625.brd` (MB frame, mm). Generated;
 
 | Rule (design row) | Item | Measured | Limit | Result |
 |---|---|---|---|---|
-| H.23(a) successor: plug-on outline (D-39) | Edge.Cuts | 4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00 | 48.416 x 87.000 mm, 4212.19 mm2 | pass |
+| H.23(a) successor: D-39 placement frame (constant of gen/cr_geometry.py, history; the board outline is the D-62 row) | D-39 constant P (not Edge.Cuts) | 4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00 | 48.416 x 87.000 mm, 4212.19 mm2 | info |
 | H.23(a) successor: courtyard inset 0.5 mm (A.8) | INSET | 4077.78 mm2 | information | info |
+| D-62 final outline (trimmed after routing, 1.0 mm fillets), inside the D-39 rectangle | FINAL_OUTLINE | 10 corners, filleted area 2327.7 mm2 (55 % of D-39), x 18.584-58.600, y 7.83-72.64, convex; edges off the angle set or short: none | inside the D-39 rectangle; -x edge at x 18.584 (D-51); edges at 0/30/45/60/90/120/135/150 deg, slanted >= 2.0 mm | pass |
+| D-60 +x key ear kept (D-41) | KEY_EAR | box x 50.0-58.6, y 52.0-71.0; 0.027 mm2 cut by the corner fillets | inside the outline corners (before the D-62 fillets) within the 0.06 mm trim tolerance; the D-41 key row is the functional check | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH1 | (26.23, 69.04); hole edge 1.75 mm from the board edge; head disc overhang 0.001 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH2 | (54.85, 68.79); hole edge 1.90 mm from the board edge; head disc overhang 0.000 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH3 | (54.85, 11.43); hole edge 1.75 mm from the board edge; head disc overhang 0.000 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH4 | (24.48, 25.18); hole edge 1.75 mm from the board edge; head disc overhang 0.001 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BL (CUI_TB005_-762-03BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 22.86 mm | gap > 0 (no plan overlap) | pass |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-FC (CUI_TB005-762-02BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 15.24 mm | gap > 0 (no plan overlap) | pass |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BT (CUI_TB005-762-02BE) | body +x 16.384 -> gap 2.200 mm; silk outer +x 16.448 -> 2.136 mm; keep-out +x 16.634 -> 1.950 mm; y overlap with the outline 15.24 mm | gap > 0 (no plan overlap) | pass |
-| D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals | J-BL, J-FC, J-BT | rotated outline x -0.004-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm | all three hit; engagement start < 21.70 mm | pass |
+| D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals | J-BL, J-FC | rotated outline x 8.396-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm | J-BL and J-FC hit (D-41 as amended by D-60; J-BT not needed); engagement start < 21.70 mm | pass |
 | H.23(j) successor: D-41 stack heights | TSW on SSQ | CR underside 11.05 mm, CR top 12.65 mm, engagement start 16.89 mm | underside 11.05 mm (D-41) | pass |
 | A.8 CHG holes in the .brd = the A.8 table (pin identity, D-02) | MB CHG package | max error 0.0000 mm | 0.001 mm | pass |
 | H.23 successor: CHG pad (1.9 mm, PLACEHOLDER) to the outline edge | J1 pads | 1.464 mm | >= 0.5 mm (A.8 inset) | pass |
-| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-110 (pins 1-10) | margin 18.982 mm | >= 0 | pass |
+| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-110 (pins 1-10) | margin 8.676 mm | >= 0 | pass |
 | H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-112 (pins 11-22) | margin 0.394 mm | >= 0 | pass |
 | H.23(h) successor: D-20 window y 30.8-66.86 less 10 mm from the MB 5V copper rim (D-11 interim) | analog window | 839.3 mm2, x 19.08-66.50 | information; TODO(measure: operator, MS4) | info |
 | H.23(l) successor: J-TAP region, +x half, every straight-line A.4 maximum met | J102 region | 2038.9 mm2, x 42.79-66.50, y 7.50-93.50 | non-empty | pass |
@@ -27,5 +33,5 @@ Source: `references/Scale Car Board PCB 20260625.brd` (MB frame, mm). Generated;
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T7b (J102.8) -> C-D6.2 (97.790, 19.363) | 31.3-92.3 mm | <= 150 mm (A.4) | pass |
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T16 (J102.9) -> J2.43 (109.982, 37.846) | 43.5-87.2 mm | <= 150 mm (A.4) | pass |
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T10 (J102.10) -> J2.47 (109.982, 32.766) | 43.5-90.6 mm | <= 150 mm (A.4) | pass |
-| H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51) | C-D4, C-DC3, C1-BT, C1-FC, CBL2, CHG, MDAC-BT, OP-BT, RB2, RB3 | 10 parts | information | info |
-| H.23(e) successor: top-side courtyard booking, 78 parts, 0.25 mm basis (D-44, D-52) | largest: J102 182.2, J1 99.5, J101 70.1, U101 27.6, D107 24.5 mm2 | 917.0 of 4077.8 mm2 = 22.5 % | <= 75 % (A.8 booking target) | pass |
+| H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51) | C-D3, CBL2, CHG, L-BT, MDAC-FC, OP-FC, RB2, RB3, REG-5V, ROP2-BT, SNS-BT | 11 parts | information | info |
+| H.23(e) successor: top-side courtyard booking, 78 parts, 0.25 mm basis (D-44, D-52) | largest: J102 182.2, J1 99.5, J101 54.5, U101 27.6, D107 24.5 mm2 | 901.4 of 4077.8 mm2 = 22.1 % | <= 75 % (A.8 booking target) | pass |

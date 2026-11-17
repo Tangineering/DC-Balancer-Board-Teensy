@@ -1,0 +1,5 @@
+H1         drill 3.200 mm  F.Cu   nearest copper 1.896 mm (zone /AGND)  ok
+H2         drill 3.200 mm  F.Cu   nearest copper 1.893 mm (track/via /AGND)  ok
+H1         drill 3.200 mm  B.Cu   nearest copper 1.896 mm (zone /AGND)  ok
+H2         drill 3.200 mm  B.Cu   nearest copper 1.893 mm (track/via /AGND)  ok
+NPTH holes: 2; result: pass

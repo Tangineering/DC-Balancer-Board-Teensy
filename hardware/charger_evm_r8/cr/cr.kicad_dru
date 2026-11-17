@@ -62,3 +62,9 @@
 # copper clad", FR408-HR 190 Tg, ENIG, purple SMOBC both sides, via tenting "Yes (filled hole and flat surface
 # not guaranteed)". The alternate-stack-up notices are commented out in the page source; no alternate stack-up
 # was active on 2026-11-13.
+
+# REVIEW_2026-11-14 CRL-4 (gen/cr_j1_pin18_solid.py): J1 pin 18 (VCHG, 1.93 A at the A.8 60/40 split) joins the
+# F.Cu VCHG pour solidly; with the zone thermal reliefs only two 0.6 mm spokes reached it (1.22 mm < A.8 2.0 mm).
+(rule "cr_J1_pin18_solid"
+  (condition "A.Type == 'Pad' && A.memberOfFootprint('J1') && A.Pad_Number == '18'")
+  (constraint zone_connection solid))

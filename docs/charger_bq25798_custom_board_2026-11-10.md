@@ -1,6 +1,6 @@
 # Custom BQ25798 charger board in the CHG footprint: design document (2026-11-10)
 
-**Status:** revision r2 (2026-11-10). Table 0.9 (§0.9) records the revisions.
+**Status:** revision r5 (2026-11-16). Table 0.9 (§0.9) records the revisions. (**Superseded 2026-11-16, r5:** "**Status:** revision r4 (2026-11-15).") (**Superseded 2026-11-15, r4:** "**Status:** revision r3 (2026-11-14).")
 
 ## 0. Status, scope and verdict
 
@@ -21,8 +21,16 @@ M1-M11), which round 3 superseded with EM1-EM25 ([WD] C); §2.4 gives the dispos
 The design rests on the following constraints:
 
 1. The pack is 2S, 7.4-8.4 V. Pack negative is PCB GND by design ([WD] A.6).
-2. V-MOT reaches 21.2-21.5 V measured, with a design clamp of 21.98-22.28 V ([WD] C, EM14). Every external input-side part
-   is therefore rated 35 V or more (§2.1.4).
+2. The true V-MOT peak on a hard brake is not measured. (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "V-MOT reaches 21.2-21.5 V measured, with a
+   design clamp of 21.98-22.28 V ([WD] C, EM14).") The pin-39 reading is nonlinear above a V-MOT of about 10.8 V
+   ([VR] §4.1). Under the fitted knee sink, an 18.2 V reading corresponds to a true V-MOT of 23.4-25.2 V ([SIM2] §5.1).
+   (**Superseded 2026-11-15, review R2-SIM-6, the band is a conduction onset, not a clamp:** "A healthy MB chopper
+   clamps at 21.35 / 22.12 / 23.10 V (minimum / typical / maximum).") A healthy MB chopper starts to conduct at
+   21.35 / 22.12 / 23.10 V (minimum / typical / maximum). It is not a hard clamp: above 0.47 A of R-SHUNT current,
+   V-MOT rises at 47 V/A. Without a VESC cut, V-MOT reaches 35 V or more after any U101 trip with a converting charger
+   ([SIM2] §5.1, §5.2, §5.8.7). On the MB as built, the chopper
+   trips at 29.3-32.4 V or never ([SIM2] Table 5.1). The V-MOT figures stay TODO(calibrate: [VRGN] §7.6). Every external
+   input-side part is therefore rated 35 V or more (§2.1.4).
 3. The charge current is 2.5 A today and 3.10 A in the regen image. With the +3.5 % ICHG tolerance, the battery-side
    copper is sized for 3.21 A ([WD] A.3).
 4. FC charging follows the operator ruling of 2026-11-08: no FC charging during or just before a purge, a preemptive
@@ -213,6 +221,9 @@ Table 0.9 lists the revisions of this document.
 | r0 | 2026-11-10 | First issue | - |
 | r1 | 2026-11-10 | Applies review run 001: 22 findings (8 major, 12 minor, 2 nit; no blocker) and nine further corrections that the adjudication records with them. The main changes are the thermal gate on T_MB,0 with the MB self-heating term and the option-K stack (§3.7), the solder-bridge fault class (§2.3.2), the L501 saturation criterion (§2.1.3), the four-board cost and the re-spin contingency (§4.5, §7.1), five ledger statuses (§7.2), the header-joint and retention tests (§6.4) and the consistency corrections of findings CCB-R1-06, CCB-R1-07, CCB-R1-08 and CCB-R1-22 | Review folder: `run-001-2026-11-10.md` (findings, verification, adjudication), `ledger_table.md`, `layout_calc_out.txt`, `sch_calc_out.txt`, `bom_cost.json` |
 | r2 | 2026-11-10 | Applies three operator facts (operator statement, 2026-11-10): the vehicle is a stationary testbench that drives flywheels; a fan may be mounted on the CCB; the CCB has no height restriction. The main changes are the forced-air thermal model and the fan-off guard (§1.6.3, §3.7.2a, §3.7.3a, §3.7.4a), the fan inlet and outlet edges (§1.2.3), the gap rule g 5 mm minimum and 5-8 mm recommended with the tall header and spacer classes (§1.3.2, §1.3.4, §1.4), the tall-pin resistance and loop inductance (§3.3), the fan and tall-stack BOM lines (§4), the new soak test T-K-20 and the measurements M15-M17 (§1.9, §6.4), and the comparison, ledger and open items (§7, §8). The envelope rule, gate D-2, the gap pad, the T_MB,0 heater-step gate, and the vibration and road items are superseded by these facts. They are kept as records, and their test IDs and measurement numbers stay. The tall-stack check found that the r1 statement "the IN-side transient is unchanged" (§1.11.2 item 4) does not hold without the W1/W2 lead (N-25). Revision r2 is not reviewed | Review folder: `layout_calc.py` section 8 and `layout_calc_out.txt` ([LC] §8), `tall_stack_calc.py` and `tall_stack_calc_out.txt` ([TS]), `make_bom.py`, `bom.csv`, `bom_cost.json` |
+| r3 | 2026-11-14 | Aligns the document with the CR review of 2026-11-14 ([VR]) and the CR simulations [SIM1], [SIM2], [SIM4] and [SIM5]; sim 3 (`hardware/charger_evm_r8/sim/comparators/`) changes no figure of this document. The V-MOT figures 21.2-21.5 V and the clamp 21.98-22.28 V derive from the invalid conversion V-MOT = V_rgn / 0.8505 (VR-1); they are kept in the superseded form and restated from [SIM2]. The eFuse status records the [WD] r9-20 change of U101 to the TCKE1401NM and its OVP band with pin leakage ([SIM5]); the CCB eFuse part becomes open item O-17. T-C-04 records the [SIM1] results (no runnable 8 V pre-step, step (2) last, the 2 Ohm substitute short). The D303, C308, T-D-04 and FR-12 rows record the CR decisions of 2026-11-14. The CCB design itself is not re-reviewed ([VR] §6, line 1312) | `hardware/charger_evm_r8/update_2026-11-14/notes_phaseB_companion_doc.md` |
+| r4 | 2026-11-15 | Applies the second CR review (R2-CRT-2, R2-SIM-6, R2-SIM-0, R2-SIM-1, R2-SIM-9, R2-PWR-0, R2-DOC-4, R2-CRT-0) and the 2026-11-15 re-runs [SIM1] §5.6-5.7, [SIM2] §5.8 and [SIM4] §5.6a. (1) The permit chapters (§1.10, §1.12, §2.5.7) and section 4 carry a status note: for the CR, D-38 ([WD] r8-17) removed the T22 / OVN pack-OV permit and [WD] r9-1 removed the heartbeat, the QUAL one-shot and the H1q/H2c gate; the two `vreg-corruption-no-fixed-pack-ovp` ledger rows change from KEPT to OPEN, and the CCB disposition is the new open item O-18. (2) The healthy chopper band 21.35-23.10 V is restated as a conduction onset, not a V-MOT ceiling, and OVP self-release as a [SIM2] model input with TODO(verify: Toshiba). (3) §1.11.1 gives the [SIM5] no-leak bands with the resistor tolerance and the lever (a) numbers of [SIM2] §5.8. (4) T-C-04 takes the tFASTTRIP 3-8 us margins and the current-limit dwell; C308 and T-D-04 take the formal brief-interruption results; T-B-06 records the as-built H.13 budget. (5) O-17 records the IMON capacitor question; §8.1 item 37 added; citation keys updated. The words "healthy chopper band" became "healthy chopper onset band" in T-B-19, §8.1 item 14 and L-8; the phase C fix round (2026-11-15) adds the superseded quote at each of the three sites. No CCB design value changes. The CCB design itself is not re-reviewed | `hardware/charger_evm_r8/update_2026-11-14/notes_phaseC_companion.md` |
+| r5 | 2026-11-16 | Applies the operator rulings of 2026-11-16 that [WD] r9-30 records. (1) I2C: "I would rather stick with 100kHz and the existing pullups rather than switching to 400kHz and have to do additional board rework in a difficult location" and "I'm leaning towards keeping the 10k resistors and running at 100kHz". PM9 (MB RSDA/RSCL 10 kOhm -> 2.7 kOhm) is withdrawn; 100 kHz with the 10 kOhm MB pull-ups is the design case, no longer a fallback. EM6 (R345/R346 DNP) stays. Changed: the §1.10.1 block diagram, requirement 7 (§1.14.2), the SCL/SDA row of Table 2.5, the /CE-SCL short case (§2.3.2; the idle node is 3.69-3.87 V with 10 kOhm, 0.39-0.57 V above the Teensy pin-19 rail, with a clamp current of at most 81 uA; TODO(verify: IMXRT1060 clamp injection limit), a consequence of ruling 1 for the operator), §4.6.3 item 2, §5.3 item 1, the proposed IO CSV rows 18 and 19 (§5.4), the §5.7 record text, §5.8 item 9, FIX1, T-B-17, the §7.1.7 PM9 row, the ledger rows `ff-reversal-hold-unattainable-at-100khz` (two tables), `raise-latency-i2c-budget` and `cr-3v3-single-tap-backpower`, and §8.2 item 15. (2) FR-07: "Let's use 3.5ms as the edit-to-write-complete budget", that is pin-34 rising edge to REG03-05 write complete <= 3.5 ms (was 1.5 ms). The per-transaction caps are replaced as [WD] FR-07 states; the FR-07 row of §5.2 changes. (3) VINDPM: a regen-image VINDPM of 18.4 V was evaluated and deferred by the operator ("Let's keep at 19V for now then, with a note to revisit later if necessary."); the regen image stays at VINDPM 18.2-19.0 V, band 18.62-19.38 V, and no site of this document changes for it ([WD] J.2 item 91). The window thresholds (close at G < 0.40 A, admit at G >= 0.50 A), the U101 no-trip criterion at 21.588 V and C_VMOT,min 1.0 mF of the same rulings have no site in this document; [WD] carries them. No CCB schematic, layout or BOM line changes, except that the PM9 parts leave the MB rework list. The CCB design itself is not re-reviewed | [WD] r9-30; `hardware/charger_evm_r8/sim/raise_latency/RESULTS.md` |
 
 ## 1. IC-independent base
 
@@ -574,8 +585,13 @@ credit their pressure drop.
 ### 1.5 Keep-outs over MB power copper and abrasion (IC-independent)
 
 The voltages involved are small, but abrasion is the dominant risk. In r1 the source of abrasion was a moving vehicle. On
-the testbench (operator statement, 2026-11-10) the sources are handling, probing and repeated insertion. V-MOT reaches 21.2-21.5 V and the
-clamp 21.98-22.28 V ([WD] C, EM14). The IPC-2221B clearance at this voltage is small. TODO(verify: IPC-2221B Table 6-1).
+the testbench (operator statement, 2026-11-10) the sources are handling, probing and repeated insertion. (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "V-MOT reaches 21.2-21.5 V and the clamp 21.98-22.28 V ([WD] C, EM14).")
+(**Superseded 2026-11-15, review R2-SIM-6:** "V-MOT reaches the healthy chopper band of 21.35-23.10 V.") With a
+healthy chopper, V-MOT passes the chopper onset band of 21.35-23.10 V and rises at 47 V/A above 0.47 A of chopper
+current. After a U101 trip it reaches the VESC cut, or 35 V or more without a cut ([SIM2] §5.1, §5.8.7). On the MB
+as built it reaches the faulty-chopper trip of
+29.3-32.4 V, or the VESC cut if that is lower ([SIM2] Table 5.1, §6 item 3); TODO(calibrate: [VRGN] §7.6). The
+IPC-2221B clearance at these voltages is small. TODO(verify: IPC-2221B Table 6-1).
 The design therefore relies on insulation layers and on air gaps, not on spacing.
 
 The MB copper under the CCB is the CR list ([WD] A.7): VBT (x 34.04-35.56, y 31.75-48.65, and a 1.016 mm run at y 34.54),
@@ -649,8 +665,10 @@ carry about +/-1 percentage point of reading error.
 | VBUS 20 V, ICHG 2.50 A | 1.5 MHz | 91.2 % | 20.0 W | 1.93 W |
 | VBUS 15 V, ICHG 2.50 A | 1.5 MHz | 93.2 % | 20.0 W | 1.46 W |
 
-The curves stop at VBUS 20 V, while V-MOT reaches 21.5 V. The loss at 21.5 V is therefore TODO(measure: rev-A bench
-efficiency). The split of the loss between the IC and the inductor is not published. If the whole 2.54 W were in the IC,
+The curves stop at VBUS 20 V. (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "while V-MOT reaches 21.5 V. The loss at 21.5 V is therefore
+TODO(measure: rev-A bench efficiency).") When the regen current exceeds the charger capacity, the healthy chopper holds
+V-MOT at 21.4-23.1 V for a surplus of up to about 0.47 A; a larger surplus raises V-MOT at 47 V/A ([SIM2] §5.1,
+§5.2). The loss at 20-23.1 V is therefore TODO(measure: rev-A bench efficiency). The split of the loss between the IC and the inductor is not published. If the whole 2.54 W were in the IC,
 the JEDEC RθJA of 44.2 C/W (DS §6.4) would give a 112 C rise. That bound shows that copper spreading, not still air, must
 remove the IC heat. The IC regulates its own die at TREG (default 120 C, DS REG16) by reducing the charge current, so an
 overheated CCB loses charge current rather than failing. However, a 2-3 W source 13.4 mm from the LM1084 courtyard
@@ -908,6 +926,17 @@ Figure 1.10 shows the board as five blocks:
    Q401-Q403, the /CE pull-ups R472/R472b and the two pin senses U403/U404.
 5. **Power stage block (S):** U501 BQ25798 and its passive network.
 
+**Status 2026-11-15 (r4, review R2-CRT-2).** The interlock block of this chapter and Figure 1.10 follow the CR permit
+of [WD] r8, before [WD] r8-17 and r9-1. Three of its parts are superseded for the CR. First, operator ruling D-38
+([WD] r8-17, 2026-11-12) removed the pack-OV permit: tap T22, pad F08, the OVN term and ARM_OK'. Pack-voltage
+protection is firmware only: the FR-46 read-back and the OV_BATT fault at `LIMIT_V_BATT_MAX` 8.5 V on BT_VOLTAGE
+(pin 25), with FR-47(a) ([WD] r8-17). No BQ29200 OUT tap exists, and charging no longer needs J-BL. Second, [WD]
+r9-1 removed the heartbeat monostable, the QUAL one-shot, the comparators BT_OK, BTB_OFF and RGN_ON and the
+H1q/H2c gate. The CR gate is Release = H1.UVB + FCC_ON.NOT FCC_OFF + QUAL.FCC_OFF.NOT P5 on five LVC packages
+([WD] r9-1). Third, the R5 MCU watchdog is the only hang defence ([WD] r9-6). The CCB text below is kept
+unchanged as the r2 record. Whether the CCB follows D-38 and r9-1 is open item O-18 (§8.3.1). The D-38 reason, an
+impractical 30 AWG joint on BQ29200 pin 8, applies to the CCB unchanged, because T22 lands on the same pin.
+
 ```
 Figure 1.10. Block diagram of the custom charger board (CCB), one board in the 22 Ag105 (CHG) holes.
 Labels: [I] IC-independent, [S] BQ25798-specific. Designators per section 0.5 of the design document.
@@ -933,7 +962,7 @@ Values: design document sections 1.11-1.13 and 2 (round-3 [WD] B.1-B.8 values ca
                                                                                      +----------------------------------|--+
  VCHG (C-D11) -> D-BT-SQ -> pack VBT <------------------------------- H301.18/19 <-------- VCHG <---------------------+
  GND (pack negative = PCB GND) <---------------- H301.4 (input return), H301.14/15 (battery return): the only GND contacts
- SDA/SCL (Teensy 18/19, MB 2.7k pull-ups) ------ H301.8/7 ---------------> U501 SDA(15)/SCL(14)   (no board pull-ups)
+ SDA/SCL (Teensy 18/19, MB 10k pull-ups) ------- H301.8/7 ---------------> U501 SDA(15)/SCL(14)   (no board pull-ups)
  J-NTC pin 1 (N$34) ---------------------------- H301.13 -- TS_EXT --R526 0R (NTC fitted)--> TS(16); XOR R525 10k TS-GND (sim)
  Teensy 6 (CHRG-STAT) <------------------------- H301.3 -- STAT <--R475 1k-- U501 STAT(1); R307 10k -> 3V3
  Teensy 5 (MPPT-DISABLE) ----------------------- H301.11 -- CHG_ARM (P5, R308 47k pull-down) --+
@@ -1003,6 +1032,35 @@ R329/C329 IMON filter to F18, R306 DNP (FLT pulled up only by Teensy pin 35). MO
 PGTH and PGOOD stay on GND. The layout rule "VCHGIN copper from the pad-10 pin to U301 IN <= 5 mm, solder-masked, no
 exposed test pad" carries over ([WD] A.8).
 
+**Status 2026-11-14 (O-17).** The values above are the TPS26630 values of [WD] B.4 before r9-20. [WD] r9-20 (D-67)
+changed U101 to the Toshiba TCKE1401NM, because the TPS26630RGER has no authorized stock (Digi-Key restock
+8-Jul-2027). The TCKE1401NM uses R101 8.45 kOhm and R102/R103/R104 845 / 64.9 / 51.1 kOhm 0.1 % on the same land
+([WD] r9-20). Its OVP rising band is 22.149 / 23.188 / 24.457 V without pin leakage, and 21.588-25.019 V with the
++-320 nA pin leakage; both include the 0.1 % resistor tolerance ([SIM5] Table 1). Its UVLO rising band is
+9.444-10.158 V without pin leakage, and 9.055-10.548 V with it ([SIM5] Table 1). (**Superseded 2026-11-15, reviews
+R2-DOC-4 and R2-SIM-0, the no-leak figures were the D-67 bands without the resistor tolerance:** "Its OVP rising band
+is 22.19 / 23.19 / 24.41 V, and 21.59-25.02 V with pin leakage ([SIM5] Table 1). Its UVLO rising band is
+9.46-10.14 V, and 9.06-10.55 V with pin leakage ([SIM5] Table 1).") The OVP maximum exceeds the
+BQ25798 recommended VBUS maximum of 24 V by up to 1.02 V and stays 0.18 V below the VBUS_OVP minimum of 25.2 V
+([SIM5] §4.1). The healthy MB chopper onset band of 21.35-23.10 V overlaps both OVP bands ([SIM2] §5.1, §5.8.1).
+(**Superseded 2026-11-15, review R2-SIM-6:** "The healthy MB chopper band of 21.35-23.10 V overlaps both OVP
+bands".) A regen surplus above the charger capacity can therefore open the eFuse ([VR] §4.2; [SIM2] §5.2, §6
+items 2-4).
+
+[SIM2] §5.8 (2026-11-15) re-evaluates lever (a) of the open CR question [WD] J.2 item 74 under the [SIM5] leakage
+model. A leak-corner OVP rising minimum of at least 23.10 V moves every healthy first trip to the charger-plus-chopper
+capacity of 1.4-1.6 A ([SIM2] §5.8.3). With R102 845 kOhm kept, R103 68.1 kOhm and R104 47.5 kOhm 0.1 % give an OVP
+rising band of 23.256-26.863 V at the leak corners and a UVLO rising band of 9.092-10.571 V ([SIM2] Table 5.7). The
+26.863 V maximum lies 0.66 V above the BQ25798 VBUS_OVP maximum of 26.2 V (SLUSDV2C §6.5, p.9). The conflict is
+structural: the V_OVPR spread of 1.100 forces a rising maximum of at least 25.41 V for a 23.10 V minimum ([SIM2]
+§5.8.5). A string scaled to 0.5x (432k / 33.2k / 24.6k) gives 23.163-26.180 V, below 26.2 V but not below 25.2 V
+([SIM2] Table 5.8). Its effect on the VCHG-IN decay is TODO(recalc: [SIM5] part b). The operator decision stays
+open ([WD] J.2 item 74). The self-release of the OVP is a model input of [SIM2], not a result. It rests on
+TCKE1401NM DS Rev. 3.0 §7.3 (p.6), §7.5 (p.7) and the Table 10.3 OVP_ton rows (p.16). Whether MODE open also latches
+an OVP event is TODO(verify: Toshiba) ([SIM2] §5.8.7). The CCB keeps the
+TPS26630 values as its design basis until O-17 is ruled. For the TCKE1401NM option, every figure that cites 23.63 V
+is TODO(recalc: D-67).
+
 #### 1.11.2 What changes because the charger is on the same board
 
 1. **The eFuse output drives the BQ25798 VBUS directly.** The VCHGOUT capacitance is C303 + C511-C514 + C529-C532 =
@@ -1014,6 +1072,13 @@ exposed test pad" carries over ([WD] A.8).
    Schottky on OUT for any inductive interruption (SLVSE94G §9.5.1, §11, as cited in [WD] B.4). It may become DNP only if
    T-C-04 on the CCB shows OUT >= -0.3 V at a hard short. Its leakage criterion (IR <= 0.1 mA at 23.6 V and 60 C)
    needs re-checking at the board temperature next to the LM1084, TODO(measure: board temperature at D303).
+   (**2026-11-14:** [SIM1] modelled the CR hard short at the far end of W1/W2. With any SMA Schottky fitted, OUT reached
+   -3.8 to -7.8 V and stayed below -0.3 V for 2.9-11.2 us; without D103 it reached -20 to -51 V ([SIM1] §5.1,
+   Table 5). Each nanohenry of D103 loop inductance cost 0.8-1.3 V of OUT minimum. Even zero loop inductance and zero
+   series resistance left -1.12 V ([SIM1] §5.2). The DNP condition is therefore not expected to be met. The CCB case
+   with 5-20 nH of OUT copper is TODO(calc: the [SIM1] deck with the CCB loop). The leakage criterion voltage follows
+   the OVP maximum of the fitted eFuse: 23.63 V (TPS26630) or 24.41 V, 25.02 V with pin leakage (TCKE1401NM),
+   TODO(recalc: D-67).)
 3. **The input-path resistance falls.** R_PATH_RG 0.12-0.19 Ohm included W1/W2, EVM R2 (10 mOhm) and EVM JP3 ([STUDY]
    §3.1, finding input-path-ir-drop-omitted). The warm-response budget H.19 must be re-derived with the board copper.
    TODO(calc: H.19 with R_PATH_RG minus W1/W2, R2, JP3).
@@ -1028,6 +1093,11 @@ exposed test pad" carries over ([WD] A.8).
 ### 1.12 Interlock logic carried over (IC-independent unless marked)
 
 #### 1.12.1 What carries over
+
+**Status 2026-11-15 (r4, review R2-CRT-2).** The paragraph and Table 1.12 below state the r2 carry-over from [WD]
+r8. For the CR, D-38 ([WD] r8-17) removed the OVN term with R178, D108, R179, U123 and U122. [WD] r9-1 removed the
+heartbeat, the QUAL one-shot, BT_OK, BTB_OFF, RGN_ON and the H1q/H2c gate (§1.10.1 status note). The CCB
+disposition is open item O-18.
 
 Every round-3 CR function carries over with unchanged values and equations ([WD] B.1-B.3, B.5): the permit logic and its
 truth table, the seven comparators (H1, UVB, BT_OK, BTB_OFF, FCC_OFF, FCC_ON, RGN_ON), the heartbeat monostable and ARM_OK,
@@ -1068,7 +1138,8 @@ maps each function to the new designators.
 3. **The W1-W4 holes and the W6/W7 pads are deleted.** TS_EXT, SCL and SDA run from header pins 13, 7 and 8 straight to
    U501 (via R526 for TS_EXT).
 4. **The tap field stays.** The flying taps T1-T22 to the MB remain, so every tap-related rule and finding stays open
-   ([STUDY] §3.1, N set). Their placement on the board is a layout item.
+   ([STUDY] §3.1, N set). Their placement on the board is a layout item. (**2026-11-15, r4:** for the CR, [WD] r9-1
+   reduced the field to ten taps, and D-38 removed T22 ([WD] r8-17). The CCB tap set follows O-18.)
 
 ### 1.13 Ground scheme
 
@@ -1152,9 +1223,9 @@ reference case.
 | 4 | Pin senses (`ILIM_SENSE`, `CE_SENSE`) | Sense thresholds re-derived from the IC's own pin thresholds; a dead sense source must read "held" or announce the inhibit | U403 threshold 0.587-0.650 V; U404 threshold about 2.5 V | §1.10.2; §2.3.1; [WD] B.6 |
 | 5 | Internal bias rail | A rail that is present whenever the converter can run, to bias the inhibit and hold pull-ups, or a rail that the charger interface block supplies | REGN | §1.10.2 |
 | 6 | Status and fault output (`STAT`) | An open-drain status output with a documented encoding that tolerates a 3.3 V pull-up and a 3.3 mA sink through R475 | STAT (pin 1): LOW = charging, 1 Hz blink = fault; 6 V and 6 mA absolute maximum | §2.2.1; [DS] Table 7-11, §6.1 |
-| 7 | I2C | A free address on the Teensy bus (pins 18/19), operation at 400 kHz with the 2.7 kOhm MB pull-ups, logic thresholds compatible with 3.3 V, and a register watchdog that reverts to safe limits | Address 0x6B; VIH 1.3 V minimum; WATCHDOG 0.5 s | §2.2.1; §5.5; [DS] §7.3.14 |
+| 7 | I2C | A free address on the Teensy bus (pins 18/19), operation at 100 kHz with the 10 kOhm MB pull-ups (**Superseded 2026-11-16, r5, [WD] r9-30, PM9 withdrawn:** "operation at 400 kHz with the 2.7 kOhm MB pull-ups"), logic thresholds compatible with 3.3 V, and a register watchdog that reverts to safe limits | Address 0x6B; VIH 1.3 V minimum; WATCHDOG 0.5 s | §2.2.1; §5.5; [DS] §7.3.14 |
 | 8 | Power-good | An input-present or power-good indication that firmware can read, as a pin or a register | No PG pin; PG_STAT and VBUS_PRESENT_STAT over I2C (FR-23) | §2.2.1; [DS] Table 4-1 |
-| 9 | Input voltage | IC input pins that tolerate the eFuse OVP maximum of 23.63 V inside their recommended range; every external input-side part rated 35 V or more | VBUS 30 V absolute maximum, 24 V recommended maximum | §2.1.4; [DS] §6.1, §6.3; [WD] B.4 |
+| 9 | Input voltage | IC input pins that tolerate the eFuse OVP maximum of 23.63 V inside their recommended range; every external input-side part rated 35 V or more. (**2026-11-14:** 23.63 V is the TPS26630 maximum. The TCKE1401NM maximum is 24.41 V, and 25.02 V with pin leakage ([SIM5] Table 1); it exceeds the 24 V recommended maximum, O-17) | VBUS 30 V absolute maximum, 24 V recommended maximum | §2.1.4; [DS] §6.1, §6.3; [WD] B.4 |
 | 10 | Charge current | 3.10 A continuous at 2S in the regen image (3.21 A with the +3.5 % tolerance) | ICHG 3.10 A regen image | [WD] A.3, G.1 |
 | 11 | Battery | 2S, 7.4-8.4 V; VREG 8.40 V (8.32 V interim, FR-40) | PROG strap for 2S | §5.5.2 |
 | 12 | Ground | Operation with the pack negative on PCB GND: current sense that needs no separate VIN- and VBAT- returns (requirement R-GND) | High-side internal current sense | §1.13.1; [WD] A.6 |
@@ -1186,8 +1257,8 @@ Table 2.1 records the power-stage decisions. Each decision follows the EVM ([UG]
 | # | Decision | Choice | Reason and source |
 |---|---|---|---|
 | D1 | Inputs | **Single input.** VAC1 and VAC2 tied to VBUS (= VCHGOUT); ACDRV1 and ACDRV2 tied to GND | [DS] Table 5-1: tie VACx to VBUS and ACDRVx to GND when the FET pair is absent; POR then sets DIS_ACDRV = 1 ([DS] §7.3.5, [TID] §2.8). The round-3 image already writes REG13 = 0x01, ACDRV off ([WD] G.1) |
-| D2 | ACFET/RBFET pair (EVM Q1/Q2, ACDRV1) | **Omitted; the eFuse U301 is kept** | (a) Reverse blocking already exists upstream in the MB RT1987 switches D-BC-FC and D-BC-RG ([STUDY] §1.4, RT1987 DS-00 §17.6). (b) The eFuse OVP cuts at 22.61-23.63 V ([WD] B.4), below the BQ25798 VBUS recommended maximum 24 V and the 30 V absolute maximum ([DS] §6.1, §6.3). VAC_OVP cannot add a second barrier below 24 V: its 26 V setting trips at 25.2-26.8 V and VBUS_OVP trips at 25.2-26.2 V ([DS] EC), both above the 24 V recommended maximum. The 18 V setting (17.4-18.6 V) would trip at the measured V-MOT of 21.5 V (§5.5.2 item 5). The eFuse OVP is therefore the only protection between 23.63 V and the IC's own 25.2 V thresholds (O-3). (c) The EVM FETs CSD17581Q3A are 30 V parts ([UG] Table 4-1), below the 35 V rule. (d) The pair adds series resistance in the regen path, whose budget is already tight ([WD] r3-11, R_PATH_RG). Residual: an eFuse FET short together with a V-MOT excursion above 30 V is a double fault (open item O-3, §8.3.1) |
-| D3 | eFuse | **Kept unchanged** (TPS26630RGER, I_OL 2.23 A, OVP 23.12 V, UVLO 9.91 V) | The eFuse is the only current limit on VCHG-IN in Run ([WD] B.4 "unprotected segment"); it is IC-independent. §1.11 |
+| D2 | ACFET/RBFET pair (EVM Q1/Q2, ACDRV1) | **Omitted; the eFuse U301 is kept** | (a) Reverse blocking already exists upstream in the MB RT1987 switches D-BC-FC and D-BC-RG ([STUDY] §1.4, RT1987 DS-00 §17.6). (b) The TPS26630 OVP cuts at 22.61-23.63 V, below the BQ25798 VBUS recommended maximum 24 V and the 30 V absolute maximum ([DS] §6.1, §6.3). (**Superseded 2026-11-14, [WD] r9-20 changed U101 to the TCKE1401NM:** "The eFuse OVP cuts at 22.61-23.63 V ([WD] B.4)".) The TCKE1401NM OVP rising band is 22.149 / 23.188 / 24.457 V, and 21.588-25.019 V with pin leakage ([SIM5] Table 1). (**Superseded 2026-11-15, review R2-SIM-0:** "22.19 / 23.19 / 24.41 V, and 21.59-25.02 V with pin leakage".) Its maximum lies up to 1.02 V above the 24 V recommended maximum, so reason (b) holds for the TPS26630 only (§1.11.1, O-17). VAC_OVP cannot add a second barrier below 24 V: its 26 V setting trips at 25.2-26.8 V and VBUS_OVP trips at 25.2-26.2 V ([DS] EC), both above the 24 V recommended maximum. The 18 V setting (17.4-18.6 V) would trip in regen, where VINDPM is 18.62-19.38 V ([WD] H threshold stack) and the healthy chopper starts to conduct at 21.35-23.10 V ([SIM2] Table 5.1; §5.5.2 item 5). (**Superseded 2026-11-15, review R2-SIM-6:** "the healthy chopper holds 21.35-23.10 V".) (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "would trip at the measured V-MOT of 21.5 V".) The eFuse OVP is therefore the only protection between 23.63 V and the IC's own 25.2 V thresholds (O-3). With the TCKE1401NM this window is 25.02-25.2 V, a 0.18 V margin ([SIM5] §4.1). (c) The EVM FETs CSD17581Q3A are 30 V parts ([UG] Table 4-1), below the 35 V rule. (d) The pair adds series resistance in the regen path, whose budget is already tight ([WD] r3-11, R_PATH_RG). Residual: an eFuse FET short together with a V-MOT excursion above 30 V is a double fault (open item O-3, §8.3.1) |
+| D3 | eFuse | **Kept unchanged** (TPS26630RGER, I_OL 2.23 A, OVP 23.12 V, UVLO 9.91 V) | The eFuse is the only current limit on VCHG-IN in Run ([WD] B.4 "unprotected segment"); it is IC-independent. §1.11. (**2026-11-14:** [WD] r9-20 changed U101 to the TCKE1401NM, because the TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027). The CCB eFuse part is open, O-17) |
 | D4 | Switching frequency | **1.5 MHz, PROG = 6.04 kOhm 1 %** (2S) | Identical to the EVM build and to the round-3 register image (REG13 PWM_FREQ 0, [WD] G.1), so the T-B bench results transfer. [DS] Table 7-1 p.25. 750 kHz (PROG 8.2 kOhm, 2.2 uH) is the documented alternate (§2.1.3) |
 | D5 | Inductor | **1.0 uH, Isat >= 6.5 A over temperature ([DS] Eq 4; saturation criterion L >= 0.70 uH at 6.5 A, §2.1.3)**; SPM6530T-1R0M120 only until O-4 closes; EVM part TDK SPM6530T-1R0M120 (11.1 A, 7.8 mOhm, 7.1 x 6.5 x 3.0 mm, [UG] Table 4-1) | [DS] §8.2.2.2: "the 1.5 MHz switching frequency only works with the 1µH inductor". Worst-case peak 5.51 A (§2.1.3). TODO(verify: TDK SPM6530T datasheet, that 11.1 A is the saturation rating and its temperature basis) |
 | D6 | Ship FET (BATFET via SDRV) | **Omitted.** SDRV -> 1 nF 50 V 0402 C0G -> GND | [DS] Table 5-1 rev C: "Connect a 1nF, 50V rated, 0402 package, ceramic capacitor from SDRV to GND when the ship FET is not used". The pack is permanently on PCB GND and D-BT-SQ already isolates the pack from VCHG in reverse ([WD] B.5). Rev C deleted the SDRV-to-BAT option that round-3 EM13 used ([TID] §7 item 1) |
@@ -1201,7 +1272,10 @@ Table 2.1 records the power-stage decisions. Each decision follows the EVM ([UG]
 #### 2.1.2 Power-stage parts
 
 Table 2.2 lists every power-stage part. "Input side" means the part sees VCHGOUT or PMID and must be rated >= 35 V (task
-rule; V-MOT measured 21.2-21.5 V, clamp 21.98-22.28 V). All parts in this table are **BQ25798-specific (S)**.
+rule; V-MOT passes the healthy chopper onset band 21.35-23.10 V and, without a VESC cut, reaches 35 V or more after a
+U101 trip, [SIM2] Table 5.1, §5.8.7; (**Superseded 2026-11-15, review R2-SIM-6:** "V-MOT reaches the healthy chopper
+band 21.35-23.10 V"); (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "V-MOT measured 21.2-21.5 V,
+clamp 21.98-22.28 V").) All parts in this table are **BQ25798-specific (S)**.
 
 | Ref | Was (EVM) | Value | Voltage rating | Package | Candidate MPN (to check in T-A-05) | Reason |
 |---|---|---|---|---|---|---|
@@ -1239,9 +1313,12 @@ TODO(verify: TDK datasheet)). [DS] EC p.14 gives only the typical fsw; the fsw t
 | VIN | 1.5 MHz, 1.0 uH: ripple / peak | 1.5 MHz, 0.8 uH: ripple / peak | 750 kHz, 2.2 uH: ripple / peak | 750 kHz, 1.76 uH: ripple / peak |
 |---|---|---|---|---|
 | 16.0 V (VBUS nominal) | 2.64 / 4.53 A | 3.30 / 4.86 A | 2.40 / 4.41 A | 3.00 / 4.71 A |
-| 22.28 V (V-MOT clamp max) | 3.55 / 4.99 A | 4.44 / 5.43 A | 3.23 / 4.83 A | 4.04 / 5.23 A |
+| 22.28 V (kept as a sweep point; (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "V-MOT clamp max")) | 3.55 / 4.99 A | 4.44 / 5.43 A | 3.23 / 4.83 A | 4.04 / 5.23 A |
 | 23.63 V (eFuse OVP max) | 3.69 / 5.05 A | 4.61 / **5.51 A** | 3.35 / 4.89 A | 4.19 / 5.30 A |
 
+- (2026-11-14) The 22.28 V row no longer marks a V-MOT bound (VR-1). VCHGOUT is bounded by the eFuse OVP rising maximum,
+  so the 23.63 V row stays the TPS26630 worst case. With the TCKE1401NM (O-17) the bound is 24.41 V, or 25.02 V with pin
+  leakage ([SIM5] Table 1). The peak at that bound is TODO(recalc: [CALC] at 25.02 V).
 - The worst case is 5.51 A. The requirement **Isat >= 6.5 A at the maximum inductor temperature** keeps an 18 % margin
   over the [DS] Eq 4 peak (6.5 / 5.513 = 1.179). The PFM peak (3.3 A with OOA disabled, 2 A with OOA enabled, [DS]
   §7.3.6.4) and the [DS] §8.2.2.2 floor of 2 A are below it.
@@ -1285,12 +1362,12 @@ Table 2.4 checks every part that sees the input voltage.
 | VCHGOUT | C303 | 50 V ([WD] E) | yes |
 | VCHGOUT | D303 Schottky | >= 40 V ([WD] B.4) | yes |
 | VCHGOUT | C511, C512, C513, C514, C541 | 50 V | yes |
-| VCHGOUT | U501 VBUS, VAC1, VAC2 | 30 V abs max ([DS] §6.1) | IC pins are 30 V parts; protected by the eFuse OVP <= 23.63 V |
-| PMID | C529-C531 (10 uF bulk), C532 (0.1 uF HF) | 50 V (Table 2.2); node maximum 23.63 V (eFuse OVP; PMID follows VBUS through the internal RBFET) | yes |
+| VCHGOUT | U501 VBUS, VAC1, VAC2 | 30 V abs max ([DS] §6.1) | IC pins are 30 V parts; protected by the eFuse OVP <= 23.63 V (TPS26630; <= 24.41 V, or 25.02 V with pin leakage, for the TCKE1401NM, [SIM5] Table 1, O-17) |
+| PMID | C529-C531 (10 uF bulk), C532 (0.1 uF HF) | 50 V (Table 2.2); node maximum 23.63 V (eFuse OVP; PMID follows VBUS through the internal RBFET; 25.02 V for the TCKE1401NM with pin leakage, [SIM5] Table 1, O-17) | yes |
 | PMID / SW1 | U501 PMID, SW1 | 30 V abs max | as above |
 | BTST1 | C506 | sees BTST1-SW1 <= 6 V ([DS] §6.1); rated 25 V | yes |
 | ACDRV1/2 | tied to GND | - | n/a |
-| T1_VMOT (F01), T2C (F03) | R309 487 kOhm, R311 442 kOhm, R314 1.00 MOhm (0.1 % 0805 divider tops behind MB R170/R171 10.0 kOhm); each sees up to the V-MOT clamp 22.28 V | TODO(verify: Vishay TNPW0805 limiting element voltage) | TODO; the divided nodes (N_H1P, N_H1M, N_UVP) are clamped to 3V3 by D304-D306 |
+| T1_VMOT (F01), T2C (F03) | R309 487 kOhm, R311 442 kOhm, R314 1.00 MOhm (0.1 % 0805 divider tops behind MB R170/R171 10.0 kOhm); each sees V-MOT: up to the healthy chopper onset maximum of 23.10 V while the regen current stays within the charger-plus-chopper capacity, and up to the VESC cut, or 35-52.7 V without a cut, above it ([SIM2] Tables 5.2, 5.3, §5.8.7) (**Superseded 2026-11-15, review R2-SIM-6, the onset is not a V-MOT ceiling:** "up to the healthy chopper maximum of 23.10 V"); on the MB as built, up to the faulty-chopper trip of 29.3-32.4 V or the VESC cut if that is lower ([SIM2] Table 5.1, §6 item 3). (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "each sees up to the V-MOT clamp 22.28 V") | TODO(verify: Vishay TNPW0805 limiting element voltage) | TODO; the divided nodes (N_H1P, N_H1M, N_UVP) are clamped to 3V3 by D304-D306 |
 | VCHGIN | H301 pad 10 header pin (and the option-K socket contact) | TODO(verify: Samtec TSW / socket rated voltage) | TODO |
 
 Note that the IC itself cannot meet a 35 V rule. The rule is met by the external parts, and the IC is protected by the eFuse
@@ -1310,7 +1387,7 @@ Table 2.5 states how each BQ25798 control pin is wired.
 | /INT (21) | Test pad TP508; R521 10.0 kOhm to 3V3 **DNP** | R521 | No Teensy pin is free for /INT: the only spare pins are 2 and 8, both on encoder nets ([WD] A.4). An open-drain output may stay open. If /INT is ever used, its pull-up goes to 3V3, never to REGN ([DS] §7.3.4.1; [WD] EM15) |
 | /QON (12) | Test pad TP509 only | - | Internal pull-up RQON ([DS] EC p.16). A LOW for tRST (10 s typ) resets system power ([DS] §7.3.12); no ship FET is fitted, so the pin has no function here |
 | PG | none | - | The BQ25798 has no PG pin ([DS] Table 4-1); power-good is PG_STAT over I2C, used by FR-23 ([WD] G.2) |
-| SCL (14), SDA (15) | Direct copper to header pins 7 and 8 | R345, R346 footprints **DNP** | The MB RSDA/RSCL 2.7 kOhm to the Teensy 3V3 (PM9) are the only pull-ups, so the board rail is never fed through I2C ([WD] A.2, EM6). VIH 1.3 V min ([DS] EC p.15) |
+| SCL (14), SDA (15) | Direct copper to header pins 7 and 8 | R345, R346 footprints **DNP** | The MB RSDA/RSCL 10 kOhm to the Teensy 3V3 (as built; PM9 withdrawn, [WD] r9-30) are the only pull-ups (**Superseded 2026-11-16, r5:** "The MB RSDA/RSCL 2.7 kOhm to the Teensy 3V3 (PM9) are the only pull-ups"), so the board rail is never fed through I2C ([WD] A.2, EM6). VIH 1.3 V min ([DS] EC p.15) |
 | TS (16) | R518 5.23 kOhm REGN-TS, R524 30.1 kOhm TS-GND; **either** R525 10.0 kOhm TS-GND (NTC simulator, no pack NTC) **or** R526 0 Ohm TS -> TS_EXT -> header pin 13 -> J-NTC (pack NTC fitted). Never both | R518, R524, R525, R526 | EVM values ([UG] Table 4-1; [DS] p.46 gives 5.24/30.31 kOhm). The choice follows T-E-09 ([WD] EM18). A missing thermistor disables charging ([DS] §7.3.6 item 1); TS_IGNORE is never relied on ([WD] EM18). TODO(verify: the NTC type at J-NTC, 103AT-class assumed) |
 | PROG (20) | R529 6.04 kOhm 1 % to quiet GND | R529 | 2S, 1.5 MHz ([DS] Table 7-1). The PROG detection window is not published, TODO(verify: TI) |
 | D+ (6), D- (7) | Unconnected; R506 0 Ohm D+ to D- footprint **DNP** | R506 | No USB input. REG11 = 0x00 (AUTO_INDET_EN 0) is written before detection starts ([WD] G.1). TODO(verify: SLUSDV2C §7.3.4.5 / TI E2E on unused D+/D- handling) |
@@ -1347,8 +1424,8 @@ serves single-fault safety. Table 2.6 gives the verdict for every EIB part ([WD]
 | U202 SN74LVC1G06 (Q201 gate) | U402 | **Kept** | A separate driver for the hold-down switch, so one stuck driver output cannot both feed and un-hold ILIM_HIZ |
 | Q203 BSS84 (release feed) + R255 48.7 kOhm | Q403 + R455 | **Kept** | Two-switch release (feed and hold): a Q403 short is held by Q401, a Q401 open is held by Q403 off ([WD] B.6 single-fault table) |
 | R271 47 kOhm (Q203 gate-source) | R471 | Kept | Q403 off by default |
-| Q201 2N7002K (hold) + R252 47 kOhm | Q401 + R452 | **Kept** | Holds ILIM_HIZ < 0.75 V (converter off, REGN on) unless released ([DS] §7.3.4.3) |
-| Q202 2N7002K (FC leg) + R254 47 kOhm + R257 59.0 kOhm | Q402 + R454 + R457 | **Kept** | Hardware FC clamp 0.65-0.95 A ([WD] H.4), on by default |
+| Q201 2N7002BK,215 (hold; D-82) (**Superseded 2026-11-15, D-82 ordered part:** "Q201 2N7002K") + R252 47 kOhm | Q401 + R452 | **Kept** | Holds ILIM_HIZ < 0.75 V (converter off, REGN on) unless released ([DS] §7.3.4.3) |
+| Q202 2N7002BK,215 (FC leg; D-82) (**Superseded 2026-11-15, D-82 ordered part:** "Q202 2N7002K") + R254 47 kOhm + R257 59.0 kOhm | Q402 + R454 + R457 | **Kept** | Hardware FC clamp 0.65-0.95 A ([WD] H.4), on by default |
 | U203 TLV3012B ILIM sense + R258-R261 | U403 + R458-R461 | **Kept, simplified role** (pin sense, no longer far-end) | A direct Teensy read cannot replace it: the sense must prove the pin is below VIL_ILIM_HIZ 0.75 V ([DS] EC p.16) with a 0.587-0.650 V threshold ([WD] B.6); a GPIO input threshold (i.MX VIL 0.99 V, [WD] H.21) does not prove that |
 | U204 TLV3012B /CE sense + R262/R263 | U404 + R462/R463 | **Kept, simplified role** | /CE swings to REGN (up to 5.2 V); a Teensy 4.1 pad is a 3.3 V input, TODO(verify: i.MX RT1060 datasheet absolute maximum). The 2.5 V threshold and the "dead source reads /CE LOW" property feed FR-08(b) unchanged |
 | R264, R265 470 Ohm (sense output series) | - | **Deleted** | They limited a ribbon conductor short to GND to 6.7 mA ([WD] B.6, r4). The outputs now reach the taps F13/F20 through R325/R348 1.00 kOhm alone: a tap-wire short to GND then draws 3.3 mA, inside the TLV3012B 10 mA output-short absolute maximum (SBOS300C §6.2, as cited in [WD] B.6) |
@@ -1390,7 +1467,7 @@ figures come from the Table 2.5 values: R523 parallel R456 = 39.94 kOhm; the TS 
 | 4-5 | BTST1 - REGN | The bootstrap node is tied to REGN. When SW1 rises to VBUS (up to 23.63 V), BTST1-SW1 falls far below -0.3 V; power-stage damage is possible | Pre-power resistance only (T-K-06 step 1) |
 | 1-2 | STAT - VBUS | The STAT pin sits at VCHGOUT (<= 23.63 V) against its 6 V absolute maximum. About 20 mA flows into Teensy pin 6 through R475 (0.40 W at 23.63 V; 12.4 mA, 0.15 W at 16 V), assuming a 3.6 V pad clamp. Teensy pad damage is a hypothesis, TODO(verify: i.MX RT1062 injection limit) | Pre-power resistance (T-K-06 step 1); the input current of T-K-06 step 3 |
 | 12-13 | /QON - /CE | When U401 sinks /CE for longer than tRST (10 s typ, [DS] §7.3.12), /QON resets system power and the charger enters HIZ. This is the safe direction | The "Charger POR" row of Table 2.8; pre-power resistance (T-K-06 step 1) |
-| 13-14 | /CE - SCL | Idle: the node sits at 3.43-3.50 V (MB 2.7 kOhm to 3V3 against 23.5 kOhm to REGN at 4.6-5.2 V), so /CE reads HIGH. While U401 sinks /CE, SCL is held LOW and I2C is lost (FR-23 class). SCL clocks pulse /CE LOW | U404 reads LOW while P5 is LOW: FR-08(b). Pre-power resistance (T-K-06 step 1) |
+| 13-14 | /CE - SCL | Idle: the node sits at 3.69-3.87 V (MB 10 kOhm to 3V3 against 23.5 kOhm to REGN at 4.6-5.2 V: (3.3/10 + V_REGN/23.5) / (1/10 + 1/23.5) = 3.688 V at 4.6 V and 3.867 V at 5.2 V), so /CE reads HIGH. The node lies 0.39-0.57 V above the 3.3 V rail at Teensy pin 19, which can inject current through the pin clamp. The Thevenin source of the node is 10 kOhm || 23.5 kOhm = 7.01 kOhm, so the clamp current is at most (3.867 - 3.3) V / 7.01 kOhm = 81 uA at REGN 5.2 V and (3.688 - 3.3) V / 7.01 kOhm = 55 uA at 4.6 V, less any clamp forward drop; TODO(verify: IMXRT1060 pin absolute maximum and clamp injection limit against 81 uA) (**Superseded 2026-11-16, r5, [WD] r9-30, PM9 withdrawn:** "Idle: the node sits at 3.43-3.50 V (MB 2.7 kOhm to 3V3 against 23.5 kOhm to REGN at 4.6-5.2 V)", which was also above the rail). While U401 sinks /CE, SCL is held LOW and I2C is lost (FR-23 class). SCL clocks pulse /CE LOW | U404 reads LOW while P5 is LOW: FR-08(b). Pre-power resistance (T-K-06 step 1) |
 
 A bridge forms at assembly, so Table 2.6b is mainly a bring-up gate. For that reason, T-K-06 step (1) measures every pair
 of Table 2.6b before any source is connected. In addition, §4.4.3 makes U501 joint inspection a gate for both assembly
@@ -1575,7 +1652,7 @@ H301 is the AG105 footprint copied from the imported `.brd` (PM0 rule, [WD] D.1)
 | U303 (UVB) | TLV3012BIDBVR | 1 OUT -> UVB; 2 V- -> GND; 3 IN+ -> N_UVP; 4 IN- -> REF303; 5 REF -> REF303; 6 V+ -> 3V3 | U103 |
 | R314 | 1.00 MOhm 0.1 % 0805 | 1 -> T2C; 2 -> N_UVP | R114 |
 | R315 | 104 kOhm 0.1 % 0603 | 1 -> N_UVP; 2 -> GND | R115 |
-| C308 | 1.0 nF C0G 0603 | 1 -> N_UVP; 2 -> GND | C108 |
+| C308 | 1.0 nF C0G 0603 (**2026-11-14:** 470 pF is an assembly option for the CR C108 and an operator question; it lowers the lost-T2 ILIM_HIZ peak from 0.86 V to 0.49 V, [SIM4] Table 5.5, for a permanent open only (worst case with a UVB delay skew: 1.160 V as built, 0.883 V with 470 pF, [SIM4] Table 5.4a). (**Superseded 2026-11-15, review R2-SIM-1, the figure came from an unreviewed scratch re-run:** "a 10 us T2 interruption stays at 1.25-1.48 V ([WD] J.2 item 77)".) A brief T2 interruption is worse than a permanent open. As built, 5-30 us interruptions give up to 1.810 V and 50.7 us above VIH 1.0 V with /CE LOW; 470 pF narrows the band to 5-20 us (1.545 V, 27.9 us). The 4.7 nF and 10 nF options move the hazard to interruptions of 30 us and 50 us or longer, with a full release for up to 0.48 ms and 1.23 ms. Matched C306 = C307 at 4.7 nF or 10 nF also fails the T-B-06 budget ([SIM4] §5.6a, Tables 5.4a, 5.4d). No option removes the hazard; the choice stays open ([WD] J.2 item 77). C308 follows the CR ruling) | 1 -> N_UVP; 2 -> GND | C108 |
 | R316 | 10.0 MOhm 1 % 0603 | 1 -> UVB; 2 -> N_UVP | R116 |
 | D306 | BAV199 | 1 -> GND; 2 -> 3V3; 3 -> N_UVP | D106 |
 | U304 (BT_OK) | TLV3012BIDBVR | 1 OUT -> BT_OK; 2 V- -> GND; 3 IN+ -> N_BTP; 4 IN- -> N_BTM; 5 REF -> REF304; 6 V+ -> 3V3 | U104 |
@@ -1626,6 +1703,10 @@ C_f + C_node <= 1016 pF. A false LOW-state trip needs 0.16-0.88 pF of stray coup
 TODO(verify: SBOS300C input capacitance).
 
 #### 2.5.7 Logic (IC-independent except U311 and the QUAL inputs, S)
+
+**Status 2026-11-15 (r4, review R2-CRT-2).** R378, D308, R379, U323 and U322 implement the pack-OV permit that D-38
+removed from the CR ([WD] r8-17). U313 and U311 implement the heartbeat and the QUAL one-shot that [WD] r9-1 removed.
+The table keeps them as the r2 record until O-18 is ruled (§1.10.1 status note).
 
 | Ref | Part / value | Pins -> nets | Was |
 |---|---|---|---|
@@ -1685,7 +1766,7 @@ The MB-side parts of this option (F101 fuse and R172 33 Ohm at CO-5V pad 1) rema
 | F05 | T4 | RGN_TAP | R321 | J1.43 (pin 30 EN net) |
 | F06 | T5 | FCC_TAP | R322 | J1.45 (pin 31 EN net) |
 | F07 | T6 | T6_3V3 | R375 | J1.29 (3V3) |
-| F08 | T22 | BAL_TAP | R378 | BQ29200 pin 8 (BAL-NOK) |
+| F08 | T22 | BAL_TAP | R378 | BQ29200 pin 8 (BAL-NOK). (**2026-11-15, r4:** withdrawn for the CR by D-38, [WD] r8-17; CCB: O-18) |
 | F09 | T8 | BT_CURR | R340, R344 | J2.31 (pin 41) |
 | F10 | T9 | KELVIN | R342, R343 | SNS-BT GND/REF1 pad |
 | F11 | T10 | QUAL_TAP | R347 | J1.23 (pin 10) |
@@ -1758,7 +1839,7 @@ and the continuous scan set ADC_EN, so REGN is on while they run from a battery 
 | VCHG-IN arrives (eFuse soft start, UVLO 9.91 V rising) | per firmware | 0 | per HB | valid | per mode | rises ~150 ms after VBUS_PRESENT ([DS] §7.3.4 step 5) | held: Q401 gate follows REGN through R452; Q403 off (R471); no feed | rises with REGN through R472/R472b, unless U401 1Y sinks | POR image: EN_CHG 1, ICHG 1 A, VINDPM = VBUS0 - 1.4 V ([DS] §7.3.4.4); no conversion while held |
 | Monostable power-up | any | 0 (glitch-free reset) | 0 until the first HB edge | - | - | - | held | HIGH | - |
 | Comparator POR (<= 1.9 ms) | any | any | any | LOW (incl. FCC_OFF, FCC_ON, RGN_ON) | H1q = H2c = 0; QQF = 0 | - | held | P5 AND ARM_OK' | inhibited |
-| T22 open, BQ29200 unpowered (J-BL unplugged) or cell OV | any | any | running | valid | per mode | on | held (ARM_OK' = 0) | HIGH | inhibited in every mode; FR-47 latches CHG_PACK_OV |
+| T22 open, BQ29200 unpowered (J-BL unplugged) or cell OV | any | any | running | valid | per mode | on | held (ARM_OK' = 0) | HIGH | inhibited in every mode; FR-47 latches CHG_PACK_OV. (**2026-11-15, r4:** the CR has no such state after D-38: FR-47(a) latches `CHG_PACK_OV` on BT_VOLTAGE > `LIMIT_V_BATT_MAX` 8.5 V with P5 LOW, and charging does not need J-BL ([WD] r8-17). CCB: O-18) |
 | FCC or RGN EN at an intermediate level | any | any | any | FCC_OFF = FCC_ON = 0 (or RGN_ON = 0) | 0 | on | held unless QQ | per P5 | converter off; FR-49 refuses arming |
 | Board 3V3 lost while armed (T6 open) | Teensy may drive; LVC Ioff blocks back-feed | - | - | unpowered | - | on | held: U401/U402 outputs float, Q401 on (R452), Q403 off (R471), Q402 on (R454) | HIGH (R472/R472b) | off, FC clamp; rail held at 0.3-0.45 V across R474 by the BAV199 back-feed ([WD] B.7); pin 7 reads LOW -> FR-08(b) |
 | eFuse latched off (VCHGIN valid, VCHGOUT 0 V) | any | any | any | valid | per mode | off | 0 V | 0 V | unpowered; FLT LOW on pin 35, `regnExpected` false (FR-23) |
@@ -1847,7 +1928,7 @@ designed to 3.5 A ([WD] A.7); the input side is the eFuse I_OL maximum 2.41 A ([
 | VCHG (BAT to pins 18/19), GND battery return to pins 14/15 (I) | 3.5 A | 1.69 mm ([LC] §1) | **Pours >= 2.5 mm** on L1 or L4 (4.65 A at 10 C rise, [LC] §1); both layers in parallel where the cell allows | >= 2.5 mm at 2 oz (7.7 A); 1 oz fallback >= 2.0 mm (4.0 A) |
 | VCHGIN, VCHGOUT, VBUS, PMID (I/S) | 2.41 A for <= 202 ms; 1.76 A continuous ([WD] H.4) | 1.01 mm at 2.41 A | **Pours >= 1.5 mm** (3.21 A at 10 C rise); VCHGIN <= 5 mm from pad 10 ([WD] A.8) | >= 2.5 mm at 2 oz |
 | SYS pour (S) | Inductor RMS 3.37 A ([LC] §3) | 1.60 mm | Pour, not a trace; >= 2.5 mm at every neck | - |
-| SW1, SW2 on L3 (S) | 3.37 A RMS, 4.99 A peak at 22.28 V ([LC] §3) | Internal: 2.74 mm at 1 oz / 1.37 mm at 2 oz, 20 C rise | **>= 1.5 mm and <= 2.5 mm wide, as short as the cell allows** (3.4.3). The IPC-2221 chart describes long conductors; a 5-7 mm strip between two via fields runs cooler | - |
+| SW1, SW2 on L3 (S) | 3.37 A RMS, 4.99 A peak at 22.28 V ([LC] §3). (**2026-11-14:** 22.28 V is no longer a V-MOT bound, VR-1. The Table 2.3 peak at the eFuse OVP maximum is 5.05 A at 1.0 uH; the RMS figure there is TODO(recalc: [LC] §3)) | Internal: 2.74 mm at 1 oz / 1.37 mm at 2 oz, 20 C rise | **>= 1.5 mm and <= 2.5 mm wide, as short as the cell allows** (3.4.3). The IPC-2221 chart describes long conductors; a 5-7 mm strip between two via fields runs cooler | - |
 | REGN, BTST (S) | < 50 mA | - | 0.3 mm | - |
 | Logic, sense, high-impedance analog (I) | < 10 mA | - | 0.15-0.2 mm | - |
 
@@ -2273,7 +2354,7 @@ render made from the Gerbers by [TLP].
 #### 3.4.8 Practices copied from TIDA-050047 and differences that matter
 
 The TIDA-050047 application differs from the CCB in four respects. Its input is USB PD at 5-20 V, against VCHGOUT up to
-22.28 V on the CCB. It charges 2- to 4-cell packs and runs reverse (OTG) mode, which the CCB does not use. Its PMID parts
+the eFuse OVP rising maximum on the CCB: 23.63 V (TPS26630) or 24.41 V (TCKE1401NM, O-17). (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "up to 22.28 V".) It charges 2- to 4-cell packs and runs reverse (OTG) mode, which the CCB does not use. Its PMID parts
 are 25 V, against the 50 V rule of §2.1.4. Its board is not mounted over another board, so its underside is free.
 
 The CCB copies the following practices:
@@ -2418,8 +2499,10 @@ curves include the inductor (the measurement used the SPM6530T, [DS] §6.7). The
 | 1.5 MHz, VBUS 20 V, ICHG 2.50 A | 91.2 % | 20.0 W | 1.93 W | 1.10 A |
 | 750 kHz, VBUS 20 V, ICHG 3.10 A | 92.4 % | 24.8 W | 2.04 W | 1.34 A |
 
-The curves stop at VBUS 20 V, and V-MOT reaches 21.2-21.5 V. The loss at 21.5-22.3 V is TODO(measure: rev-A bench
-efficiency). The 15 V row at 3.10 A is not an operating point. Regen charging runs at VINDPM 18.2-19.0 V, and in FC
+The curves stop at VBUS 20 V. (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "and V-MOT reaches 21.2-21.5 V. The loss at 21.5-22.3 V is
+TODO(measure: rev-A bench efficiency).") When the regen current exceeds the charger capacity, the healthy chopper holds
+V-MOT at 21.4-23.1 V for a surplus of up to about 0.47 A; a larger surplus raises V-MOT at 47 V/A ([SIM2] §5.1,
+§5.2). The loss at 20-23.1 V is TODO(measure: rev-A bench efficiency). The 15 V row at 3.10 A is not an operating point. Regen charging runs at VINDPM 18.2-19.0 V, and in FC
 mode the hardware clamp limits the input to 0.65-0.95 A (§2.1.3; [WD] H.4). The 20 V rows are the design cases.
 
 [LC] §4 splits the 20 V / 3.10 A case with the typical RDS(on) values ([DS] EC pp.14-15: RSNS 8, Q1 24, Q2 35, Q4 17,
@@ -2874,6 +2957,10 @@ The §1.7.3 zones apply. The layout adds:
 
 ## 4. Bill of materials
 
+**Status 2026-11-15 (r4, review R2-CRT-2).** The BOM below includes the r8 permit parts: R378, D308, R379, U323 and
+U322 for the pack-OV permit, and U311 and U313 with their timing parts. For the CR, D-38 ([WD] r8-17) and [WD] r9-1
+removed the corresponding parts. The BOM and the cost roll-up are not changed in r4; they follow O-18 (§8.3.1).
+
 This section gives the bill of materials (BOM) of the CCB, with stock, unit prices, fabrication and assembly cost, and a
 cost comparison with Path A. Nothing is ordered. The machine-readable BOM is `bom.csv` in the review folder: 111 part lines
 plus the PCB line. The generator `make_bom.py` regenerates it and the cost roll-up `bom_cost.json` ([BOMGEN]). r2 adds
@@ -3001,7 +3088,7 @@ The EVM 25 V X5R 0805 parts C2012X5R1E106K125AB stay on SYS only, where §2.1.2 
 
 | Line | Status | Gate |
 |---|---|---|
-| D303 Schottky, D307 TVS | Selected by datasheet in T-A-05 ([WD] E); B340A-13-F is a bench-only fallback for D303 | T-A-05 |
+| D303 Schottky, D307 TVS | Selected by datasheet in T-A-05 ([WD] E); B340A-13-F is a bench-only fallback for D303. (**2026-11-14:** the CR orders the STMicroelectronics STPS2H100A as D103, `hardware/charger_evm_r8/bom_2026-11-14/cr_bom.csv` line 11. The onsemi MBRA2H100T3G on the same land is an operator question: IFSM 130 A against 75 A and a 1.2-1.3 V shallower OUT minimum in [SIM1], but a longer time below -0.3 V. Both parts fail the T-A-05 limit "VF at 3 A <= 0.5 V"; the 130 A / 1 us pulse criterion is open for both, [SIM1] §5.1, §6 item 3) | T-A-05 |
 | C511, C512, C529-C531 | Candidate only (§4.1.2 item 3) | T-A-04, T-A-05 |
 | R541/C541 input snubber (DNP) | No MPN (§2.1.2) | only if fitted |
 | Socket strips (header option K) | r2: elevated class for h_k = H_u - 2.54 mm (2.6-5.6 mm): Samtec ESQ-110 / ESQ-112 (K2) or a Harwin M20 female with a long-pin male (K3), candidates only. The r1 SSW-110 / SSW-112 class gives H_u about 11.05 mm, above the r2 band. Tail diameter for the 1.10 mm MB drill, seat height and accepted pin range TODO(verify: Samtec, Harwin drawings) | §1.3.4 conditions 1-3; §1.3.2 Table 1.3a |
@@ -3175,7 +3262,9 @@ capacitors become the 4xx parts.
 #### 4.6.3 Lines that carry over unchanged (IC-independent)
 
 1. Every CR integrated circuit and passive, renumbered 1xx -> 3xx (§1.12.1, Table 1.12).
-2. The MB rework parts: C-D8/C-D10 10 uF 35 V (PM2), R170/R171 (PM3), RSDA/RSCL 2.70 kOhm (PM9) ([WD] D.1).
+2. The MB rework parts: C-D8/C-D10 10 uF 35 V (PM2), R170/R171 (PM3) ([WD] D.1). RSDA/RSCL stay at their fitted
+   10 kOhm: PM9 is withdrawn ([WD] r9-30). (**Superseded 2026-11-16, r5:** "C-D8/C-D10 10 uF 35 V (PM2), R170/R171
+   (PM3), RSDA/RSCL 2.70 kOhm (PM9) ([WD] D.1).")
 3. The DNP options: keep-alive (U312, D301, R392, C352; MB R172, F101), FCI_OK (U317 group), the fallback-2 fused link.
 4. The CHG header strips (TSW-110, TSW-112) and the tap pins (TSW-101).
 5. The polyimide sheet, the RTV, the thermocouple and the PM4 overlay wire.
@@ -3267,11 +3356,11 @@ G.2 that carries over with no change of text or scope.
 | FR-04 | `chargerModeTick()`, T1-T9, I-1..I-9 | BQ25798-specific (mixed) | Same sequence. The T1 step-6 and step-8b proofs now read IC-pin senses on the same board (wording only) |
 | FR-05 | `chargingControl()` gates | IC-independent | System rule, no packaging term |
 | FR-06 | `assertFcChargeEnable()`; window latch owns BT_BUS LOW / FC_BUS HIGH | IC-independent | RT1987 sequencing on the MB |
-| FR-07 | Single interrupt-driven LPI2C engine, transaction caps, bus clear | BQ25798-specific (numbers), IC-independent (engine) | The normative caps (0.35 ms at 400 kHz, 0.5 ms at 100 kHz, edge to write <= 1.5 ms) are firmware budgets. The shorter on-board bus can only add margin |
+| FR-07 | Single interrupt-driven LPI2C engine, transaction caps, bus clear | BQ25798-specific (numbers), IC-independent (engine) | The normative figures of [WD] FR-07 (r9-30) are firmware budgets: 100 kHz with the 10 kOhm MB pull-ups as the design case; pin-34 rising edge to REG03-05 write complete <= 3.5 ms; the byte-boundary read abort, extended to the FR-41(vii) hold-ACK post and the T4 post; and no write longer than 3 data bytes, in place of the per-transaction caps (at 100 kHz with the x1.133 clock-stretch factor a 2-byte read takes 0.544 ms and W(REG03-05) 0.533 ms, both above the old 0.5 ms cap). The shorter on-board bus can only add margin. (**Superseded 2026-11-16, r5, [WD] r9-30:** "The normative caps (0.35 ms at 400 kHz, 0.5 ms at 100 kHz, edge to write <= 1.5 ms) are firmware budgets.") |
 | FR-09 | FCCEIL consistency | BQ25798-specific | Same register semantics |
 | FR-10 | I_BT trip while BT_BUS is commanded LOW | IC-independent | MB INA253 |
 | FR-11 | FC-window power balance with the T-F-15 ground offset | IC-independent | The charger input and battery returns still enter MB GND at CHG pads 4/14/15 (A.6), so the pin-22 offset term stays |
-| FR-12 | Two-part boot self-test | IC-independent | Same taps and comparators |
+| FR-12 | Two-part boot self-test | IC-independent | Same taps and comparators. (**2026-11-14:** [SIM5] §5 recommends FR-12(a2) k = 0.2 with dV_bus >= 2 V, and an FR-12(b1) slope test with a timed fallback. The CCB follows [WD] G.2) |
 | FR-13 | Port the fw v37 rev 2 `J` guards; switch-conflict term (ino 7413-7418) drops REGEN | IC-independent (G1, G2), BQ25798-specific (G3 = REG20/21) | Guards act on MB currents and on the charger fault flags |
 | FR-14, FR-15, FR-15b, FR-16, FR-17 | FC-window governor, purge scheduler, pre-emption, early purge | IC-independent (IINDPM write BQ25798-specific) | Purge ruling of 2026-11-08 applies unchanged |
 | FR-19 | State 99 per T7 | IC-independent | |
@@ -3315,14 +3404,18 @@ and none is deleted. The changes remove failure modes that existed only in the r
 | FR-31 | TODO-to-test map names EVM tests (T-A-02, EVM rows of T-F-12) | Map the same TODOs to the CCB tests (bare-board net check instead of T-A-02; T-B-16/T-B-19 re-scoped to the on-board power stage, §6.3) | mixed |
 | FR-37 | Diagnostic label "carrier rail lost" via EIB evidence | Label "CCB 3V3 rail lost"; the rail is fed only through T6/R175 (A.4). The EIB rail-loss row of B.6 (both ribbon 3V3 conductors open) no longer exists | IC-independent |
 | FR-44 | STAT plausibility motivated by ribbon shorts 3-4 / 4-5 and EIB R275 | Keep the rule (pin 6 against REG1C CHG_STAT and P5 for > 2 s refuses QUAL). Its motivation becomes a stuck or bridged pin-6 net and a pin-6 firmware misconfiguration (OUTPUT HIGH). The CCB schematic keeps the series resistor as R475 1.00 kOhm (Table 2.5 and Table 2.6), so STAT LOW still reads about 0.31 V at pin 6 (D.3 row 6, [WD] H.21); the threshold logic is unaffected (i.MX VIL 0.99 V) | BQ25798-specific (STAT encoding), IC-independent (rule) |
-| FR-47 | Cause list "OVN, an E5 lead-off or a U201 1Y stuck open" | Cause list "OVN, an open /CE drive joint or the open-drain /CE driver stuck open". Latching behaviour unchanged | IC-independent (rule), BQ25798-specific (/CE) |
+| FR-47 | Cause list "OVN, an E5 lead-off or a U201 1Y stuck open" | Cause list "OVN, an open /CE drive joint or the open-drain /CE driver stuck open". Latching behaviour unchanged. (**2026-11-15, r4:** [WD] r8-17 re-points FR-47(a) to BT_VOLTAGE > `LIMIT_V_BATT_MAX` with P5 LOW; OVN is not a cause on the CR, O-18) | IC-independent (rule), BQ25798-specific (/CE) |
 
 Three round-3 timing margins were set by lead length and disappear as constraints. None of them is a firmware
 constant, so no firmware value changes:
 
 1. The W7 I2C ground offset of <= ~20 mV at 3.1 A (A.6, H.11) against the 0.4 V VIL margin. On the CCB the I2C
-   reference is the board plane. The 2.7 kOhm MB pull-ups (PM9) stay, because the 400 kHz budget in FR-07 assumes them;
-   whether 10 kOhm would now suffice is TODO(measure: SCL rise time on the CCB, T-D-03).
+   reference is the board plane. The MB pull-ups stay at their fitted 10 kOhm, and FR-07 budgets 100 kHz with them
+   (operator ruling 2026-11-16, PM9 withdrawn, [WD] r9-30). The predicted 30-70 % rise time is 593-839 ns for a bus
+   capacitance Cb of 70-99 pF, against the UM10204 standard-mode limit of 1000 ns; the Cb ceiling is 118 pF. The
+   harness Cb is an estimate: TODO(measure: SCL rise time on the CCB, T-D-03). (**Superseded 2026-11-16, r5:** "The
+   2.7 kOhm MB pull-ups (PM9) stay, because the 400 kHz budget in FR-07 assumes them; whether 10 kOhm would now suffice
+   is TODO(measure: SCL rise time on the CCB, T-D-03).")
 2. The E-lead maxima (A.5, 20-85 mm) and the ribbon length (0.30 m). Their only firmware effect was through the U203/U204
    thresholds that FR-08 relies on; those thresholds are re-derived for the CCB divider values (§5.4, row 33).
 3. The W5 adjacent-conductor short analysis (A.3). Its firmware consequences were FR-44 and the FR-08 trip directions; both
@@ -3372,10 +3465,10 @@ in the same commit as the firmware pin map and the host tests.
 +17,Output,Digital,Charger FC ceiling confirmed,CHG_FCCEIL,"HIGH only while the BQ25798 IINDPM/ICHG registers hold verified FC-window values. LOW blanks the converter in an FC window whenever V-MOT is not above 1.089 x VBUS with REGEN on. 47 kOhm pull-down"
 # row 18 (edit not in D.3; proposed for consistency)
 -18,Communication,I2C,SDA,SDA,Used for battery charger
-+18,Communication,I2C,SDA,SDA,"Used for battery charger (BQ25798 on the charger board, I2C 0x6B; MB RSDA/RSCL 2.7 kOhm; no pull-ups on the charger board)"
++18,Communication,I2C,SDA,SDA,"Used for battery charger (BQ25798 on the charger board, I2C 0x6B; MB RSDA/RSCL 10 kOhm, 100 kHz; no pull-ups on the charger board)"
 # row 19 (D.3 + edit)
 -19,Communication,I2C,SCL,SCL,Used for battery charger
-+19,Communication,I2C,SCL,SCL,"Used for battery charger (BQ25798 on the charger board, I2C 0x6B; MB RSDA/RSCL 2.7 kOhm; no pull-ups on the charger board). Never route WDOG1_B here (AD_B1_00 ALT4): WDOG1_B goes to pin 20 only"
++19,Communication,I2C,SCL,SCL,"Used for battery charger (BQ25798 on the charger board, I2C 0x6B; MB RSDA/RSCL 10 kOhm, 100 kHz; no pull-ups on the charger board). Never route WDOG1_B here (AD_B1_00 ALT4): WDOG1_B goes to pin 20 only"
 # row 20 (new; = D.3)
 +20,Reserved,Digital,MCU watchdog output (WDOG1_B; R5 future work),WDOG1_B_RSVD,"Do not assign. WDOG1_B is routed only here (AD_B1_10 ALT1); never to pin 19 (SCL) or pin 34 (CHG_H1_RB). Left unconfigured until the R5 watchdog lands"
 # row 21 (new; = D.3)
@@ -3410,6 +3503,9 @@ in the same commit as the firmware pin map and the host tests.
 -41,Input,Analog,Battery current measurement,BT_CURRENT,
 +41,Input,Analog,Battery current measurement,BT_CURRENT,"INA253 BT output; also feeds the charger-board BT_OK comparator (10 kOhm series, 1 MOhm pull-up to 3V3) and MDAC-BT IOUT1"
 ```
+
+(**2026-11-15, r4:** the row 5 text names the heartbeat and OVN. For the CR, [WD] r9-1 removed the heartbeat
+and D-38 removed OVN (§1.10.1 status note). The row 5 text follows the CCB disposition O-18.)
 
 Rows 0-4, 9, 11-15, 24-26, 36-40 are unchanged. Pin 8 stays unlisted and unconfigured (A.4: encoder net ENC_B with
 RENC2). The D.3 conditional row for pin 2 (`PURGE_SENSE`) is unchanged.
@@ -3460,7 +3556,9 @@ the CCB schematic must confirm.
    leakage list, O-11).
 5. **VAC inputs and ACDRV.** REG13 keeps ACDRV off and VAC_OVP stays at 26 V (REG10 VAC_OVP field 0h, which is also the
    POR value: REG10 reset = 85h, SLUSDV2C §7.5.1.13; rising threshold 25.2-26.8 V, EC), because 18 V (17.4-18.6 V) would trip
-   at the measured V-MOT of 21.5 V ([TID] line 473). The CCB fits no ACFETs. SLUSDV2C Table 5-1 states for
+   in regen: VINDPM is 18.62-19.38 V ([WD] H threshold stack), and the healthy chopper starts to conduct at 21.35-23.10 V
+   ([SIM2] Table 5.1).
+   (**Superseded 2026-11-15, review R2-SIM-6:** "the healthy chopper holds 21.35-23.10 V".) (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "at the measured V-MOT of 21.5 V ([TID] line 473)".) The CCB fits no ACFETs. SLUSDV2C Table 5-1 states for
    both VAC1 and VAC2: "Connect to VBUS if the ACFET1 and RBFET1 [ACFET2 and RBFET2] are not installed", and "Tie ACDRVx to
    GND" when no FET pair is installed. The CCB schematic follows this (decision D1 (§2.1.1)).
 6. **D+/D-, /QON, SDRV.** REG11 = 0x00 stays (no BC1.2 or HVDCP detection). SDRV gets 1 nF to GND (DS rev C deleted the
@@ -3566,7 +3664,7 @@ Bracketed fields are filled at build time.
   `CHG_HW_CUSTOM` constant block match it. TS = [pack NTC via J-NTC | fixed divider]. SDRV = 1 nF to GND. No ACFETs,
   no ship FET.
 - C-D8 and C-D10 are 10 uF >= 35 V 0805 (were 25 V GRM21BZ71E106KE15L).
-- MB RSDA/RSCL are 2.7 kOhm (were 10 kOhm). MB ROS is removed; Teensy pin 7 (ex ENC_ENABLE) is the /CE readback, tapped at ROS
+- MB RSDA/RSCL stay 10 kOhm (as built) and the charger I2C runs at 100 kHz. MB ROS is removed; Teensy pin 7 (ex ENC_ENABLE) is the /CE readback, tapped at ROS
   pad 2. Pin 8, RENC2 and the encoder nets are untouched. Teensy pin 20 is reserved for WDOG1_B.
 - [Insulation and tail rules under the charger board, from §1.3.5 and §1.5 of the design document.] A thermocouple sits on the MB
   VBT trace [yes | no].
@@ -3574,6 +3672,8 @@ Bracketed fields are filled at build time.
   hardware (cell > 4.35 V for 1.6-4.9 s, an open tap or an unplugged balance lead -> /CE HIGH and ILIM_HIZ held); there is
   still no firmware BAL-NOK input. Charging needs the balance lead (J-BL) plugged. Every RT1987 EN pin is a driven output,
   never INPUT_PULLUP.
+- (**2026-11-15, r4:** the bullet above holds only if O-18 keeps the pack-OV permit on the CCB. For the CR, D-38
+  removed T22; pack OV is firmware only (FR-46 and OV_BATT at 8.5 V), and charging does not need J-BL ([WD] r8-17).)
 - Bodge parts and wires: R170/R171 10.0 kOhm at C-D6 pad 1 (V-MOT) and C-D2 pad 1 (VBUS) feeding the charger-board dividers; a
   Kelvin wire from the SNS-BT GND/REF1 pad; taps into the J1/J2 breakout for the EN nets of pins 28/30/31, 3V3 (through a
   68 ohm limiter), BT-CURR and pins 10/16/17/21/22/23/33/34/35; T1 and T17 twisted with GND shields bonded at the charger board
@@ -3615,7 +3715,8 @@ between Path A, Path B and the charger board, and for the parallel charger-IC se
 8. Thermal measurement (TODO(measure)): charger board on the MB with the LM1084 at Run dissipation; sets CHG_TDIE_DERATE_C
    and CHG_TDIE_TRIP_C (FR-50). r2: the measurement is the fan-on and fan-off soak (M16, T-K-20 with its fan-on leg T-K-14); starting values about
    95 C and 105-110 C (§5.6, FR-50).
-9. I2C pull-up check (TODO(measure)): SCL/SDA rise time at 400 kHz on the charger board with the 2.7 kOhm MB pull-ups.
+9. I2C pull-up check (TODO(measure)): SCL/SDA rise time at 100 kHz on the charger board with the 10 kOhm MB pull-ups
+   (limit 1000 ns; predicted 593-839 ns for Cb 70-99 pF).
 10. Coordination with the charger-IC search: if another IC is chosen, keep items 1, 3 (mechanism), 4 (IC-independent
     cases), 7 (IC-independent tests), 8, 9 and replace the BQ25798-specific FRs per the section-5.9 interface table.
 11. Record-keeping: the D.2 statement that "State 98 4 toggles pin 5 raw" means the J sub-command 4 (ino 12148-12153);
@@ -3634,7 +3735,7 @@ listed hardware properties keeps every IC-independent Teensy pin, CSV row and FR
 
 | Signal / function | Teensy pin | Stays with another IC? | Requirement on a substitute IC |
 |---|---|---|---|
-| CHG_ARM (charge enable, ANDed with heartbeat and OVN) | 5 | Yes (signal); meaning re-bound to the IC's inhibit pin | A charge-inhibit pin that inhibits when undriven or when its driver is unpowered |
+| CHG_ARM (charge enable, ANDed with heartbeat and OVN) | 5 | Yes (signal); meaning re-bound to the IC's inhibit pin. (**2026-11-15, r4:** the CR has neither the heartbeat ([WD] r9-1) nor OVN (D-38); CCB: O-18) | A charge-inhibit pin that inhibits when undriven or when its driver is unpowered |
 | Converter release / hard converter-off (ILIM_HIZ hold + release in round 3) | none (hardware) | Function stays; circuit is IC-specific | A pin that stops switching independent of registers (round 3 asks T-B-21 for the BQ25798) and keeps the IC's bias rail on |
 | FC current clamp select (RFC_OFF) | none (hardware) | Function stays if the IC has a pin-set input limit | Pin-programmable input current limit, or a hardware FC-current shed (U117 option) |
 | CHG_HB heartbeat | 21 | Yes | None (monostable on the board) |
@@ -3646,7 +3747,7 @@ listed hardware properties keeps every IC-independent Teensy pin, CSV row and FR
 | RT1987 EN pins and pad rules | 27-32 | Yes | None |
 | STAT | 6 | Pin stays; encoding and FR-33/FR-44 are IC-specific | An open-drain status output, or drop FR-33 |
 | I2C | 18, 19 | Pins stay; driver, address and register map are IC-specific | Address free on the bus; a watchdog that reverts to safe limits |
-| OVN (BQ29200 hardware pack-OV permit) | none | Yes | None |
+| OVN (BQ29200 hardware pack-OV permit) | none | Yes | None. (**2026-11-15, r4:** removed from the CR by D-38, [WD] r8-17; CCB: O-18) |
 | MCU watchdog (WDOG1_B) | 20 (reserved) | Yes | None |
 
 #### 5.9.2 What is replaced with another IC (BQ25798-specific)
@@ -3743,7 +3844,7 @@ The CCB adds the following codes:
 
 | Code | Description | Used by |
 |---|---|---|
-| FIX1 | Bench header fixture: the 1x10 and 1x12 receptacle strips of the chosen header option (§1.3.4) on a carrier at the 22-hole pattern. Pad 10 is fed from PSU1 through the G4 resistor; pins 18/19 go to BATSIM through a shunt; pins 4/14/15 go to one star point; pins 3, 7, 8 and 11 go to the bench Teensy as on the MB; pin 13 (THERM, TS_EXT) goes to a 103AT-class NTC only when R526 is fitted and is otherwise left open (Table 2.5); with 2.7 kOhm I2C pull-ups to the Teensy 3V3 as on the MB (PM9). The taps F01-F24 go to the T-C rig | T-B group, T-C group, T-K-05 to T-K-11, T-K-15, T-K-16 |
+| FIX1 | Bench header fixture: the 1x10 and 1x12 receptacle strips of the chosen header option (§1.3.4) on a carrier at the 22-hole pattern. Pad 10 is fed from PSU1 through the G4 resistor; pins 18/19 go to BATSIM through a shunt; pins 4/14/15 go to one star point; pins 3, 7, 8 and 11 go to the bench Teensy as on the MB; pin 13 (THERM, TS_EXT) goes to a 103AT-class NTC only when R526 is fitted and is otherwise left open (Table 2.5); with 10 kOhm I2C pull-ups to the Teensy 3V3 as on the MB, at 100 kHz (**Superseded 2026-11-16, r5, PM9 withdrawn, [WD] r9-30:** "with 2.7 kOhm I2C pull-ups to the Teensy 3V3 as on the MB (PM9)"). The taps F01-F24 go to the T-C rig | T-B group, T-C group, T-K-05 to T-K-11, T-K-15, T-K-16 |
 | FI1 | Fault-injection unit: a second populated CCB on which pins and parts are lifted for the open-joint tests. FI1 is never fitted to the vehicle | T-C-05, T-D-03, T-D-06, T-D-11 |
 | LOOP1 | A CCB built with a current-probe wire loop in series with L501. The layout variant is TODO(layout: split L501 pad with a wire-bridge option). LOOP1 is never fitted to the vehicle | T-K-08 |
 | SCOPE-HF | Oscilloscope and probe with >= 500 MHz bandwidth, tip-and-barrel or <= 5 mm ground spring; a differential probe for BTST-SW. The 500 MHz figure is a proposal: the registry SCOPE (>= 100 MHz) resolves the 1.5 MHz waveform but not the edge ringing. TODO(verify: bench equipment available) | T-K-07, T-K-09, T-K-10 |
@@ -3788,7 +3889,7 @@ tests carry over modified rather than retire.
 |---|---|---|---|
 | T-A-01 | Unchanged | Tests MB J1/J2 tap positions. The flying taps T1-T22 remain on the CCB (§1.12.2 item 4) | IC-independent |
 | T-A-01b | Unchanged | Pin-7 tap and encoder-net occupancy are MB facts | IC-independent |
-| T-A-01c | Unchanged | T22 lands on the MB BQ29200 pad 8; unchanged | IC-independent |
+| T-A-01c | Unchanged | T22 lands on the MB BQ29200 pad 8; unchanged. (**2026-11-15, r4:** [WD] r8-17 withdrew T-A-01c for the CR (D-38); CCB: O-18) | IC-independent |
 | T-A-02 | **Retires** | Tests EVM nets, EVM modifications EM1-EM4, EVM jumper posts, the R272/R272b links, the EVM corner holes and the E-lead lengths. None exists on the CCB (§2.4.2). Its intent (values and structural isolation of the ILIM_HIZ and /CE networks) moves to T-K-05; the board-level net check moves to T-K-03 | BQ25798-specific |
 | T-A-03 | Unchanged | Q401-Q403 are the same 2N7002K/BSS84 parts with the same 47 kOhm pull-ups (Table 2.6). "Populated EIB" reads "populated CCB" (G1) | BQ25798-specific |
 | T-A-04 | Modified | **Object:** C511, C512 and C529-C531 are 10 uF 50 V X7R 1210/1206 parts, not 35 V 0805 parts (Table 2.2). **Added:** SYS bulk C519-C523 effective >= 6 uF at 8.82 V and BAT C538/C539 effective >= 3 uF ([DS] §6.3 via Table 2.2). MB C-D8/C-D10 and C302a/b (ex C102a/b) are unchanged. Pass thresholds for VBUS (>= 2 uF) and PMID (>= 4 uF) at 23.6 V are unchanged | BQ25798-specific (VBUS/PMID/SYS/BAT); IC-independent (C-D8, C-D10, C302) |
@@ -3811,7 +3912,7 @@ datasheet; only the method (current-limited bench supply, BATSIM, the G4 resisto
 | T-B-03 | Modified | **Retired part:** the r3 stray-shunt check on JP13 pin 2 and JP14 pin 2; the footprints do not exist (§2.2.2 rule 1). T-K-05 checks the structural rule instead. **Probe points:** TP504 and TP505 with ground springs. **Levels:** /CE >= 3.0 V not armed; held <= 0.25 V; released 2.06-2.40 V (regen) and 1.52-1.76 V (FC); U403 transition 0.587-0.650 V. Replace these numbers by the O-11 re-run of H.4 if the on-board leakage list moves them (TODO(calc: r3_calc.py H.4 with the CCB leakage list), O-11) | BQ25798-specific |
 | T-B-04 | Modified | **Apportioning method:** the round-3 test lifted JP18, R254 and R272. On the CCB, lift R525 (TS simulator), R454 and R472 on FI1, or compute the share from the measured total and the part values. **Load list:** eFuse U301, U501, the TS divider R518/R524/R525, the REGN pull-ups R452/R454/R471/R472/R472b, D303 and the MB CHG divider. Pass unchanged (inhibited <= 5 mA, released <= 6 mA) | BQ25798-specific |
 | T-B-05 | Unchanged | VINDPM retention | BQ25798-specific |
-| T-B-06 | Unchanged | Inhibit latency; CP on the FIX1 feed (G3); "EIB input" reads the U401/U402 inputs | BQ25798-specific |
+| T-B-06 | Unchanged | Inhibit latency; CP on the FIX1 feed (G3); "EIB input" reads the U401/U402 inputs. (**2026-11-15, r4:** for the CR as built, [SIM4] Table 5.4b gives an H.13 budget at 1.80 A of 158.7 us with fixed comparator delays and 139.1 us under the overdrive model, the latter below the 150 us T-B-06 limit. The overdrive figure rests on a ramp extrapolation, TODO(verify: SBOS300C tPD at about 0.5 mV/us). Recorded only) | BQ25798-specific |
 | T-B-07 | Unchanged | ILIM_HIZ sampling; Q402 for Q202 | BQ25798-specific |
 | T-B-08 | Unchanged | Charger watchdog | BQ25798-specific |
 | T-B-09 | Unchanged | Keep-alive decision; G4 keeps 0.19 ohm. "Run T-E-04 first" is kept | BQ25798-specific |
@@ -3827,9 +3928,9 @@ datasheet; only the method (current-limited bench supply, BATSIM, the G4 resisto
 | T-B-14b | Modified | **Reference point:** the shunt and integrating DMM sit in the FIX1 battery wire (pins 18/19 to BATSIM), not on W3. The CCB has no wire between the charger and the MB, so the accounting check is bench-only. Pass unchanged | BQ25798-specific |
 | T-B-15 | Unchanged | CV and termination | BQ25798-specific |
 | T-B-16 | Modified | **Object:** the CCB's own power stage on FIX1 in still air, without the LM1084. **Retired items:** the JP5/JP3 link-joint temperatures and the fallback "link soldered into the plated holes (EM11/EM12)". **Replaced by:** the header joints of pins 10 and 18/19. **Added fail lever:** the 750 kHz alternate (R529 8.2 kOhm, L501 2.2 uH, §2.1.3). The in-situ soak beside the LM1084 is the new T-K-14. **Pass:** TDIE < 100 C and TREG_STAT 0 (unchanged). **Changed pass item:** the round-3 "joint rise < 20 C" is replaced, because on FIX1 the pin joints sit near the board temperature (§3.7.6). The CCB-side joints of pins 10 and 18/19 must stay at or below the header rating minus 20 C (TODO(verify: Samtec TSW datasheet, operating temperature)); their rise over ambient is recorded as the T-K-14 input. **r2 (testbench, fan):** the r2 thermal design relies on the bench fan (§3.7.3a), so the gating run uses FAN at the M15 velocities over the top and through a FIX1 gap of the chosen g. The still-air run is record only; it is the fan-off image for the FR-50 thresholds of T-K-20 | BQ25798-specific |
-| T-B-17 | Unchanged | Unpowered I2C clamp; R345/R346 are DNP, so the MB pull-ups (PM9) alone are the bus pull-ups | BQ25798-specific |
+| T-B-17 | Unchanged | Unpowered I2C clamp; R345/R346 are DNP, so the MB pull-ups RSDA/RSCL 10 kOhm alone are the bus pull-ups (**Superseded 2026-11-16, r5, PM9 withdrawn, [WD] r9-30:** "the MB pull-ups (PM9) alone") | BQ25798-specific |
 | T-B-18 | Unchanged | STAT/CHG_STAT with ILIM forced; Q401 for Q201 | BQ25798-specific |
-| T-B-19 | Modified | **Object:** the CCB power stage. Its layout differs from the EVM, so the round-3 efficiency basis (eta_max 0.93) is re-measured. **Added points:** VBUS 21.5 V and 22.6 V, because the [DS] efficiency curves stop at 20 V (§1.6.2). **Added record:** the U501 and L501 case temperatures at each point, as input to T-K-14. Pass unchanged (P_in >= 20.8 W at 7.4 V with ICHG 3.10 A) | BQ25798-specific |
+| T-B-19 | Modified | **Object:** the CCB power stage. Its layout differs from the EVM, so the round-3 efficiency basis (eta_max 0.93) is re-measured. **Added points:** VBUS 21.5 V and 22.6 V, because the [DS] efficiency curves stop at 20 V (§1.6.2). (**2026-11-14:** both points lie inside the healthy chopper onset band of 21.35-23.10 V ([SIM2] Table 5.1; an onset, not a V-MOT ceiling, [SIM2] §5.8.7) (**Superseded 2026-11-15, review R2-SIM-6, an onset, not a V-MOT ceiling:** "both points lie inside the healthy chopper band of 21.35-23.10 V ([SIM2] Table 5.1)"). Their r2 basis, a measured V-MOT of 21.5 V, is superseded (VR-1). A point at the 23.10 V band maximum is TODO(operator).) **Added record:** the U501 and L501 case temperatures at each point, as input to T-K-14. Pass unchanged (P_in >= 20.8 W at 7.4 V with ICHG 3.10 A) | BQ25798-specific |
 | T-B-20 | Unchanged | REGN and ILIM ADC timing; C350 for C150 | BQ25798-specific |
 | T-B-21 | Unchanged | Register-independence of the HIZ stop | BQ25798-specific |
 
@@ -3842,7 +3943,7 @@ datasheet; only the method (current-limited bench supply, BATSIM, the G4 resisto
 | T-C-01c | Unchanged | U315 POR | IC-independent |
 | T-C-02 | Unchanged | H1 trip points | IC-independent |
 | T-C-03 | Unchanged | UVB and BT_OK thresholds; R342 select-on-test. The 60 C corner is valid only if T-K-14 shows the comparator region <= 60 C (G5) | IC-independent |
-| T-C-04 | Modified | **Retired part:** the OUT excursion "with the real 0.30 m W1/W2 lead" (§1.11.2 item 2). **Changed step (2):** the hard short is applied at the C511/C512 pads (the U501 VBUS input) through on-board copper only. **Added decision:** D303 may become DNP only if step (2) shows OUT >= -0.3 V (§1.11.2 item 2, O-12). **Added record:** the U501 VBUS pin voltage during step (2) against the [DS] §6.1 minimum (-2 V, converter not switching, [DS] §6.1 p.7). Steps (1) and (3), the IN-side spike criteria and the r6 vehicle MB-end step are unchanged; the reduced-voltage order (8 V, 12 V, then full voltage) is unchanged. **r2 (tall stack and on-board OUT copper, [TS] §(c)-(d)):** the IN-side peak is no longer the round-3 value. Without the 150 nH W1/W2 lead, the ideal model gives 35.5-40.0 V at U301 IN for 5-20 nH of OUT copper, and the r2 stack (H_u 5.1-8.1 mm, up to +10.8 nH on the pad-10 / pad-4 loop) raises this by 0-0.3 V, to at most 40.3 V. The MB end stays at 19.8-20.0 V. **Added records:** (a) the U301 IN and MB-end peaks against these values; (b) whether D307 conducts (the ideal peak exceeds its 36.7 V VBR minimum at 10-20 nH), with its current or clamp voltage where the probe allows; (c) the CCB-GND-to-MB-GND voltage across pad 4 during step (2), against the [TS] §(d) estimate of 0.08-1.34 V (three pins) to 0.24-4.02 V (one pin) at 65 A falling in 0.1-1.0 us. The pass criteria (60 V at IN, U301 67 V, MB end 35 V and 40 V) are unchanged. D307 energy and the OUT copper inductance are TODO(calc) (N-25) | IC-independent (eFuse); the VBUS-pin record is BQ25798-specific |
+| T-C-04 | Modified | **Retired part:** the OUT excursion "with the real 0.30 m W1/W2 lead" (§1.11.2 item 2). **Changed step (2):** the hard short is applied at the C511/C512 pads (the U501 VBUS input) through on-board copper only. **Added decision:** D303 may become DNP only if step (2) shows OUT >= -0.3 V (§1.11.2 item 2, O-12). **Added record:** the U501 VBUS pin voltage during step (2) against the [DS] §6.1 minimum (-2 V, converter not switching, [DS] §6.1 p.7). Steps (1) and (3), the IN-side spike criteria and the r6 vehicle MB-end step are unchanged; the reduced-voltage order is unchanged except as follows. (**Superseded 2026-11-14, [SIM1] §5.3:** "the reduced-voltage order (8 V, 12 V, then full voltage) is unchanged".) The 8 V pre-step cannot run: the eFuse UVLO holds U301 off below 9.7-10.1 V (TPS26630, T-K-06) or 9.06-10.55 V (TCKE1401NM with pin leakage, [SIM5] Table 1). The lowest runnable pre-step is about 10.6 V. On the CR, the 10.6 V and 12 V starts already took OUT to -2.8 to -4.5 V ([SIM1] §5.3). Run step (2) last, after steps (1) and (3) and the UVLO, OVP, IMON and FLAG checks ([SIM1] §6 item 1). (**Superseded 2026-11-15, review R2-SIM-9, the margins were taken at the 6 us midpoint only:** "On the CR, a short through 2 Ohm tripped the fast-trip path and kept OUT at +0.82 to +1.23 V; it is the lower-risk substitute for step (2) ([SIM1] Table 7, §6 item 2).") On the CR, a short through 2 Ohm trips the fast-trip path and keeps OUT at +0.72 to +1.39 V over tFASTTRIP 3-8 us, and at +0.76 to +1.09 V at the 4 us typical; 1.5 Ohm keeps +0.25 to +0.53 V ([SIM1] Table 7a; TCKE1401NM DS Rev. 3.0 Table 10.3, p.16). It is the lower-risk substitute for step (2) ([SIM1] §6 item 2). However, the TCKE1401NM turns back on after a fast trip and regulates at I_LIM 1.97-2.77 A for up to tCL_PLIM 190 ms; with MODE open it then latches off ([SIM1] §5.7; DS §7.8, §7.9, Table 10.3). This dwell dissipates 23.8-44.3 W at 16 V and up to 65.4 W at 23.6 V, at most 12.4 J per event, on the only eFuse ([SIM1] Table 7b). Each repetition of step (1) or (2), and each fast-trip short, adds one dwell. The I_LIM band is an unverified extrapolation, and the same dwell after an SCP or UVLO trip is an assumption, TODO(verify: Toshiba). The CCB keeps the TPS26630 basis until O-17 is ruled. The CCB values are TODO(calc). **r2 (tall stack and on-board OUT copper, [TS] §(c)-(d)):** the IN-side peak is no longer the round-3 value. Without the 150 nH W1/W2 lead, the ideal model gives 35.5-40.0 V at U301 IN for 5-20 nH of OUT copper, and the r2 stack (H_u 5.1-8.1 mm, up to +10.8 nH on the pad-10 / pad-4 loop) raises this by 0-0.3 V, to at most 40.3 V. The MB end stays at 19.8-20.0 V. **Added records:** (a) the U301 IN and MB-end peaks against these values; (b) whether D307 conducts (the ideal peak exceeds its 36.7 V VBR minimum at 10-20 nH), with its current or clamp voltage where the probe allows; (c) the CCB-GND-to-MB-GND voltage across pad 4 during step (2), against the [TS] §(d) estimate of 0.08-1.34 V (three pins) to 0.24-4.02 V (one pin) at 65 A falling in 0.1-1.0 us. The pass criteria (60 V at IN, U301 67 V, MB end 35 V and 40 V) are unchanged. D307 energy and the OUT copper inductance are TODO(calc) (N-25) | IC-independent (eFuse); the VBUS-pin record is BQ25798-specific |
 | T-C-05 | Modified | **Deleted fault cases:** opens of E1-E8, of each W5 conductor and of the links L1/L2; R273 open; each 3V3 ribbon conductor open; all adjacent ribbon-pair shorts (3-4, 4-5, 11-12 and the rest); the T-C-13 cross-references. **Kept fault cases (G2):** R455, R452, R471, R472, R472b open singly and R472 + R472b together; Q401 drain open; Q403 D-S short; Q401 D-S short; T16 (F17) open. **Added fault cases, on FI1:** an open joint on each sense trace (lift R458 at U403 and R462 at U404); an open joint on each drive trace (lift U401 pin 7, U401 2Y and 3Y outputs, U402 pin 4); each driver input open, which R467-R470 must pull LOW (§2.3.2); pin 6 stuck LOW and pin 6 shorted to CE_DRV (FR-22/FR-44 re-scope, Table 5.2); pin 6 driven HIGH by firmware with the STAT sink <= 3.3 mA through R475 (Table 2.5). **Pass:** the [WD] B.6 outcomes for the kept part rows, unchanged; the added rows fail safe (converter held or /CE HIGH) and FR-08 or FR-44 flags them, except the pull-down-protected input opens, which read LOW and need no flag | Mixed (method IC-independent; the fault list is BQ25798-specific) |
 | T-C-06 | Unchanged | Firmware sequences on emulated supplies | IC-independent |
 | T-C-07 | Modified | **Deleted:** each W5 conductor open, the ribbon-pair shorts (1-3, 2-3, 3-4, 4-5, 11-12) and the "one W5 3V3 conductor open" case. **Changed:** the CR and EIB rails are one rail behind R375 (§2.6.2 item 1), so "CR and EIB rails < 0.8 V" reads "the 3V3 rail < 0.8 V" (held at 0.3-0.45 V across R474 by the BAV199 back-feed, Table 2.8), and ">= 3.05 V in normal operation" applies to the merged load U302-U323 plus U401-U404 (U301 is fed from VCHGIN, not from 3V3). **Kept:** tap opens T2-T6, T8-T11, T21 with the bus energised and the Teensy driving; the shorts of C325, of one decoupler (C401) and of the rail to GND with the MCU-reset check | IC-independent |
@@ -3862,7 +3963,7 @@ datasheet; only the method (current-limited bench supply, BATSIM, the G4 resisto
 | T-D-01 | Unchanged | Teensy reset and boot | IC-independent |
 | T-D-02 | Unchanged | Teensy hang with P5 HIGH; (a) only after T-W-01 | IC-independent |
 | T-D-03 | Modified | **Changed step (2):** "TP36 (E5) lifted" reads "U401 pin 7 (1Y) lifted on FI1"; R472/R472b then hold /CE HIGH, which is the same condition. Steps (1) and (3) and the pass criteria are unchanged | Mixed |
-| T-D-04 | Unchanged | Comparator single faults | IC-independent |
+| T-D-04 | Unchanged | Comparator single faults. (**2026-11-14:** [SIM4] simulated only a permanent T2 open and one 50 us interruption; with a UVB delay skew of 10 us the ILIM_HIZ peak reached 1.39 V, above 1.0 V for up to 28.3 us, [SIM4] Table 5.4 and §5.6. (**Superseded 2026-11-15, review R2-SIM-1, the formal re-run replaces the scratch figures:** "An unreviewed scratch re-run of the [SIM4] decks gave ILIM_HIZ above VIH with /CE LOW for 10-30 us interruptions with the as-built C306-C308 values. A brief-interruption step on F03 is TODO(verify: formal [SIM4] re-run with 2-40 us T2 interruptions)".) The formal re-run covers 2 us to 3 ms and a permanent open ([SIM4] §5.6a, Table 5.4a). As built, 5-30 us interruptions give ILIM_HIZ above VIH 1.0 V with /CE LOW, up to 1.810 V and 50.7 us at a 20 us interruption. A brief-interruption step on F03 is added. The duration spectrum of a real T2 fault is TODO(verify: T-D-04 bench capture of a T2 intermittency). Whether such an excursion restarts the converter is TODO(verify: SLUSDV2C ILIM_HIZ deglitch and restart time)) | IC-independent |
 | T-D-05 | Unchanged | REG05 fault key | BQ25798-specific |
 | T-D-06 | Modified | **Changed setup:** "TP36 lifted" reads "U401 pin 7 lifted on FI1". Pass unchanged | Mixed |
 | T-D-07 | Unchanged | D-BT-EN short | IC-independent |
@@ -3906,7 +4007,7 @@ the T-G tests run as drive cycles on the stationary testbench, with "drive" as �
 | T-F-14 | Unchanged | CV hold with the calibrated scale | IC-independent |
 | T-F-15 | Unchanged | IMON and CHG_VOLTAGE ground offset; R305 for R105 (§1.13.4 item 2) | IC-independent |
 | T-F-16 | Modified | **Object:** the MB VBT trace under the CCB and the MB-side joint of pin 18. **Changed reference:** every rise is measured against T_MB,local, a thermocouple on the MB surface at x 25-35, y 55-75, away from the VBT trace and the header. On the CCB the pins conduct converter heat into their joints (§3.7.6), so ambient is not a valid reference. **Changed pass:** VBT trace rise over T_MB,local < 20 C (IPC-2221 predicts <= 10 C at 3.21 A on 1 oz, [WD] A.8); pin-18 joint absolute temperature at or below the header or socket rated operating temperature minus 20 C (TODO(verify: Samtec TSW or socket datasheet, T-A-05)). The expected joint level (T_MB,local + 20-26 C without the gap pad, + 10-17 C with it, option S, §3.7.6) is recorded, not gated. **Joint condition:** decided by T-K-17 (4-wire contact resistance), not by temperature. **Changed fail branch:** a trace rise >= 20 C caps the regen ICHG image at 2.50 A until the overlay rework (unchanged). A joint above its absolute limit points to the gap pad (§3.7.4), H_u, 750 kHz or ICHG 2.50 A, not to the MB overlay. **r2:** the gap pad is superseded by the bench fan (§3.7.4); a joint above its limit points to the fan velocity (M15), H_u, 750 kHz or ICHG 2.50 A. The pin-18 joint with forced air is TODO(calc) and is measured in T-K-20 | IC-independent |
-| T-F-17 | Unchanged | BQ29200 pack-OV permit | IC-independent |
+| T-F-17 | Unchanged | BQ29200 pack-OV permit. (**2026-11-15, r4:** [WD] r8-17 withdrew T-F-17 for the CR (D-38); CCB: O-18) | IC-independent |
 
 ### 6.4 New tests (T-K)
 
@@ -3980,11 +4081,11 @@ Every round-3 ordering rule of [WD] §0.2 and D.1 stays in force. Table 6.2 list
 | T-W-01 (and T-C-14, FR-42) | Every FC-charge window, attended or not; T-D-02 case (a) | [WD] R5, §0.2 item 10, T-C-14 | Unchanged |
 | T-E-04 | T-B-09, T-B-10, T-B-12 | [WD] T-B-09 | Unchanged |
 | T-B-09 fails | T-A-05c, then fallback 2 | [WD] T-A-05c | Unchanged |
-| T-A-01, T-A-01b, T-A-01c | Tap fitting (PM6), T22 (PM11), P24 `PURGE_SENSE` | [WD] D.1 | Unchanged |
+| T-A-01, T-A-01b, T-A-01c | Tap fitting (PM6), T22 (PM11), P24 `PURGE_SENSE` | [WD] D.1 | Unchanged. (**2026-11-15, r4:** PM11 and T-A-01c are withdrawn for the CR by D-38, [WD] r8-17; CCB: O-18) |
 | T-A-06 (step 0 included) | PCB order | [WD] D.1 PM0 | Netlist from §2.5 |
 | T-A-06c | Sheet bonding and CCB fitting (PM4 class) | [WD] D.1 PM4 | Unchanged |
 | T-B and T-C bench gates | PM1 (Ag105 removal) | [WD] D.1 PM1, study condition 13 | T-K-05 to T-K-11 join this set |
-| T-C-04 at 8 V and 12 V | T-C-04 at full voltage | [WD] T-C-04 | Unchanged |
+| T-C-04 at 12 V (**Superseded 2026-11-14, [SIM1] §5.3:** "at 8 V and 12 V"; the eFuse UVLO holds the 8 V step off, and the lowest runnable step is about 10.6 V) | T-C-04 at full voltage | [WD] T-C-04 | Unchanged |
 | T-C-10 | TW_HB_MAX and TW_QQ_MAX constants | [WD] T-C-10 | Measured on the CCB monostables |
 | T-B-20 | T_REGN_MAX | [WD] T-B-20 | Unchanged |
 | T-F-08 | Any FC window with traction load | [WD] §0.2 item 6 | Unchanged |
@@ -4240,9 +4341,9 @@ rev-2 fix, ESTIMATE).
 |---|---|---|---|
 | PM1 remove the Ag105 | Yes | Yes | No (new board) |
 | PM2 C-D8/C-D10 to 10 uF >= 35 V | Yes | Yes | Folded into the new board |
-| PM3 R170/R171, PM6 taps, PM10 ROS removal, PM11 tap T22 on BQ29200 pin 8 | Yes | Yes (the tap field stays, §1.12.2 item 4) | Folded into the new board |
+| PM3 R170/R171, PM6 taps, PM10 ROS removal, PM11 tap T22 on BQ29200 pin 8 | Yes | Yes (the tap field stays, §1.12.2 item 4) | Folded into the new board. (**2026-11-15, r4:** PM11 is withdrawn for the CR by D-38, [WD] r8-17; CCB: O-18) |
 | PM4 polyimide sheet, then the CR soldered | Yes | Sheet yes; option-K socket strips soldered once; two bonded nylon feet at (23.20, 70.64) and (32.20, 70.64) (§1.4) | No |
-| PM9 RSDA/RSCL 2.7 kOhm | Yes | Yes (§5.3 item 1) | Folded in |
+| PM9 RSDA/RSCL 2.7 kOhm (**withdrawn 2026-11-16**, [WD] r9-30: RSDA/RSCL stay 10 kOhm, I2C at 100 kHz) | No | No (§5.3 item 1) | Not applicable (**Superseded 2026-11-16, r5:** "Yes / Yes (§5.3 item 1) / Folded in") |
 | Chassis mounting | EVM on 6 nylon standoffs, EIB on the chassis ([WD] E) | None | None |
 
 Paths A and A-C need the same MB rework apart from the mounting. The desolder of the Ag105 is the single irreversible step in
@@ -4335,7 +4436,7 @@ Table 7.6 states the status of each round-6 finding.
 
 | # | Key | Sev. | Status | Reason | Label |
 |---|---|---|---|---|---|
-| 1 | `vreg-corruption-no-fixed-pack-ovp` | major | KEPT | The BQ29200 OUT -> U323 -> OVN term and ARM_OK' (U322) carry over; tap T22 and PM11 stay (§1.12.1) | I |
+| 1 | `vreg-corruption-no-fixed-pack-ovp` | major | (**Superseded 2026-11-15, D-38:** "KEPT") OPEN, O-18 | The BQ29200 OUT -> U323 -> OVN term and ARM_OK' (U322) carry over; tap T22 and PM11 stay (§1.12.1). (**2026-11-15, review R2-CRT-2:** for the CR, operator ruling D-38 ([WD] r8-17) removed T22, PM11, the OVN term and ARM_OK' and closed this finding by operator ruling, not by hardware; pack OV rests on FR-46 and OV_BATT at 8.5 V. The CCB status follows O-18) | I |
 | 2 | `dbtsq-short-unfused-pack-on-vchg` | minor | KEPT | D-BT-SQ stays on the MB; a short still puts the pack on VCHG, now on CCB copper; FR-48 stays | I |
 | 3 | `cr-and-mb-battery-path-copper-sized-below-ichg` | major (uncert.) | CHANGED | The CCB side is re-sized for 1 oz outer copper: pours >= 2.5 mm, >= 5 vias of 0.3 mm per transition (§3.1.3-3.1.5). The MB VBT part stays (T-A-06c, T-F-16) | M |
 | 4 | `tc04-in-spike-criterion-omits-mb-vchgin-ratings` | major (uncert.) | KEPT | The eFuse IN side (C302a/b/c, D307) and the MB VCHG-IN end are unchanged; the three-point T-C-04 scope stays (§1.11.1) | I |
@@ -4346,7 +4447,7 @@ Table 7.6 states the status of each round-6 finding.
 | 9 | `purge-fc-only-ridethrough-bag-evidence-reopen` | major | KEPT | Purge and rescue logic is firmware and system behaviour (§5.2) | I |
 | 10 | `chg-src-misattributes-subh1-regen-reopen` | major | KEPT | The `chg_src` attribution uses the same IBAT and V_rgn data (§5.2) | M |
 | 11 | `ff-headroom-admission-contradicts-single-g-test` | major | KEPT | Window admission is firmware (§5.2) | I |
-| 12 | `ff-reversal-hold-unattainable-at-100khz` | minor | CHANGED | Without W7 the 100 kHz fallback is less likely; the SCL rise time on the CCB decides it, TODO(measure) (§5.3 item 1) | M |
+| 12 | `ff-reversal-hold-unattainable-at-100khz` | minor | CHANGED | Without W7 the 100 kHz fallback is less likely; the SCL rise time on the CCB decides it, TODO(measure) (§5.3 item 1). (**2026-11-16, r5:** 100 kHz with the 10 kOhm MB pull-ups is now the design case, not a fallback ([WD] r9-30, PM9 withdrawn); [WD] FR-41(iii) sets one ramp step per 2-3 ticks at 100 kHz. The finding is not re-judged in this revision) | M |
 | 13 | `cr-coordinate-convention-mirror-ambiguity` | major | CHANGED | The tab removes the CR pin-11 chamfer corner; the marker moves to (38.90, 76.40); `pin_identity_check.py` must run again (§1.8; OT-7) | I |
 | 14 | `eib-e-lead-max-lengths-geometrically-infeasible` | minor | CLOSED | No E-leads (§2.3.1) | I |
 | 15 | `t-a-05-stale-j101-region-dims` | minor | CLOSED | No J101 (§1.12.2 item 2) | I |
@@ -4507,7 +4608,7 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 | 1 | 1 | `preempt-fcc-btb-overlap` | major | f,g | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
 | 1 | 2 | `eib-wireoff-releases-converter` | major | b,c | **CLOSED** | No lead can lift; the two-switch release Q403 + Q401 is kept, and a cracked on-board trace reads LOW through R467-R470 (§2.3.1, §2.3.2) |
 | 1 | 3 | `qual-window-single-barrier` | major | d,e | **KEPT** | The QUAL one-shot carries over as U311 (BQ25798-specific) (§1.12.1) |
-| 1 | 4 | `p5-static-arm-hang` | major | d,f | **KEPT** | Heartbeat monostable U313 and ARM_OK carry over (§1.12.1); T-K-09 step 3 re-proves them with the converter switching |
+| 1 | 4 | `p5-static-arm-hang` | major | d,f | **KEPT** | Heartbeat monostable U313 and ARM_OK carry over (§1.12.1); T-K-09 step 3 re-proves them with the converter switching. (**2026-11-15, r4:** for the CR, [WD] r9-1 removed the heartbeat, and the R5 MCU watchdog is the only hang defence ([WD] r9-6). The CCB status follows O-18) |
 | 1 | 5 | `permit-tap-failsafe-and-en-threshold` | minor | d,g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
 | 1 | 6 | `comparator-divider-open-faults` | minor | d,g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
 | 1 | 7 | `uvb-blocks-raised-regen` | minor | d | **KEPT** | Carrier logic; it carries over with unchanged topology and values (§1.12.1) |
@@ -4520,12 +4621,12 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 | 1 | 14 | `evm-c43-25v-vbus-ldo` | minor | c | **CLOSED** | There is no EVM; the modified part has no CCB footprint (§2.4.2) |
 | 1 | 15 | `btok-kelvin-wrong-reference` | minor (uncert.) | d,g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
 | 1 | 16 | `run-quiescent-draw-unaccounted` | minor | e,d | **CHANGED** | The 55-78 mW Run budget is re-booked for the merged rail and the deleted series parts (TODO(calc), T-K-05) |
-| 1 | 17 | `efuse-ovp-above-bq-rating` | minor | d,e | **KEPT** | eFuse OVP 22.61-23.63 V stays and is now the only input OV device in front of U501, since the ACFET pair is omitted (§2.1.1 D2) |
+| 1 | 17 | `efuse-ovp-above-bq-rating` | minor | d,e | **KEPT** | eFuse OVP 22.61-23.63 V stays and is now the only input OV device in front of U501, since the ACFET pair is omitted (§2.1.1 D2). (**2026-11-14:** TPS26630 band; the TCKE1401NM band is 21.59-25.02 V with pin leakage, [SIM5] Table 1, O-17) |
 | 1 | 18 | `carrier-copper-unspecified` | minor | d-mech | **CHANGED** | Stack moves from 2 oz outer to 1 oz outer (ST1) or 2 oz inner (ST2), because the RQM land pattern has 0.2 mm gaps; current capacity moves to width (§3.1.3). Digest CB: N |
 | 1 | 19 | `btb-sense-threshold-gap` | major | d,g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
 | 1 | 20 | `open-input-failsafe` | major | b,d | **CHANGED** | No removable conductor inside the charger chain; R467-R470 stay for cracked traces and joints from handling, repeated insertion and thermal cycling on the testbench (r1: a moving vehicle; §2.3.1). Tap inputs keep their biases |
 | 1 | 21 | `readback-misses-evm-side` | major | b | **CLOSED** | U403/U404 sense the U501 ILIM_HIZ and /CE pins on their own traces (§2.3.1; §3.6.2 item 2) |
-| 1 | 22 | `raise-latency-i2c-budget` | major | a,f | **CHANGED** | FR-07 caps stay; the on-board bus (no W7) can only add margin (§5.2 FR-07, 5.3 item 1) |
+| 1 | 22 | `raise-latency-i2c-budget` | major | a,f | **CHANGED** | FR-07 caps stay; the on-board bus (no W7) can only add margin (§5.2 FR-07, 5.3 item 1). (**2026-11-16, r5:** [WD] r9-30 sets the FR-07 budget to 3.5 ms (pin-34 rising edge to REG03-05 write complete) at 100 kHz and replaces the per-transaction caps; the CCB still only adds margin) |
 | 1 | 23 | `latent-comparator-faults` | minor | d,f | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
 | 1 | 24 | `uvb-ref-drift-margin` | minor (uncert.) | d | **KEPT** | Carrier logic; it carries over with unchanged topology and values (§1.12.1) |
 | 1 | 25 | `imon-clamp-leakage` | minor (uncert.) | d | **KEPT** | Carrier logic; it carries over with unchanged topology and values (§1.12.1) |
@@ -4563,7 +4664,7 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 | 2 | 4 | `w8-unfused-hot-lead` | major | a | **CLOSED** | The 0.3 m EVM leads W1-W8 do not exist on the CCB (§1.12.2 item 3) |
 | 2 | 5 | `fr08-hb-latency-false-trip` | major | d,f | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
 | 2 | 6 | `eib-pin8-backpower-unpowered-outputs` | major | b,g | **CHANGED** | No separate EIB rail; the BAV199 back-feed into the merged rail remains and R474 holds it at 0.3-0.45 V (§2.3.1) |
-| 2 | 7 | `cr-3v3-single-tap-backpower` | major | b,c,g | **KEPT** | The CCB rail is still fed from one tap T6 through R375; I2C still runs on the MB pull-ups RSDA/RSCL 2.7 kOhm (PM9), R345/R346 DNP (§2.4.2 EM6). Digest CB: P |
+| 2 | 7 | `cr-3v3-single-tap-backpower` | major | b,c,g | **KEPT** | The CCB rail is still fed from one tap T6 through R375; I2C still runs on the MB pull-ups RSDA/RSCL 10 kOhm, R345/R346 DNP (§2.4.2 EM6). (**Superseded 2026-11-16, r5, PM9 withdrawn, [WD] r9-30:** "RSDA/RSCL 2.7 kOhm (PM9)".) Digest CB: P |
 | 2 | 8 | `pin8-encoder-net-occupancy` | major | g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
 | 2 | 9 | `pin8-tap-on-encoder-net` | major | g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
 | 2 | 10 | `preempt-drops-subh1-regen` | major | f | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
@@ -4691,7 +4792,7 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 | 5 | 22 | `bom-polyimide-adhesive-unspecified` | minor | d-mech | **KEPT** | Header and MB-interface mechanics; any board in the 22 holes inherits them (§1.3) |
 | 5 | 23 | `cr-end-strain-relief-anchor` | minor | a | **CHANGED** | W1-W4 strain relief disappears; tap-lead strain relief within 30 mm stays (§1.7.2 item 4) |
 | 5 | 24 | `layout-table-dimension-gaps` | minor | doc | **KEPT** | Documentation rule; it applies to the CCB documents in the same way |
-| 6 | 1 | `vreg-corruption-no-fixed-pack-ovp` | major | d,e,g | **KEPT** | The BQ29200 OUT -> U323 -> OVN term and ARM_OK' (U322) carry over; tap T22 and PM11 stay (§1.12.1) |
+| 6 | 1 | `vreg-corruption-no-fixed-pack-ovp` | major | d,e,g | (**Superseded 2026-11-15, D-38:** "**KEPT**") **OPEN, O-18** | The BQ29200 OUT -> U323 -> OVN term and ARM_OK' (U322) carry over; tap T22 and PM11 stay (§1.12.1). (**2026-11-15, review R2-CRT-2:** for the CR, D-38 ([WD] r8-17) closed this finding by operator ruling, not by hardware; the CCB status follows O-18) |
 | 6 | 2 | `dbtsq-short-unfused-pack-on-vchg` | minor | g | **KEPT** | D-BT-SQ stays on the MB; a short still puts the pack on VCHG, now on CCB copper; FR-48 stays |
 | 6 | 3 | `cr-and-mb-battery-path-copper-sized-below-ichg` | major (uncert.; verifier minor) | d-mech,g | **CHANGED** | CCB side re-sized: >= 2.5 mm pours at 1 oz, >= 5 vias of 0.3 mm per transition (§3.1.4-3.1.5). The MB VBT part stays (T-A-06c, T-F-16). Digest CB: N |
 | 6 | 4 | `tc04-in-spike-criterion-omits-mb-vchgin-ratings` | major (uncert.) | d,g | **KEPT** | The eFuse IN side (C302a/b/c, D307) and the MB VCHG-IN end are unchanged; the three-point T-C-04 scope stays (§1.11.1) |
@@ -4702,7 +4803,7 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 | 6 | 9 | `purge-fc-only-ridethrough-bag-evidence-reopen` | major | f,g | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
 | 6 | 10 | `chg-src-misattributes-subh1-regen-reopen` | major | f | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
 | 6 | 11 | `ff-headroom-admission-contradicts-single-g-test` | major | f | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
-| 6 | 12 | `ff-reversal-hold-unattainable-at-100khz` | minor | f,a | **CHANGED** | The 100 kHz fallback is less likely without W7; the SCL rise time on the CCB decides it (TODO(measure), §5.3 item 1) |
+| 6 | 12 | `ff-reversal-hold-unattainable-at-100khz` | minor | f,a | **CHANGED** | The 100 kHz fallback is less likely without W7; the SCL rise time on the CCB decides it (TODO(measure), §5.3 item 1). (**2026-11-16, r5:** 100 kHz with the 10 kOhm MB pull-ups is now the design case, not a fallback ([WD] r9-30, PM9 withdrawn); [WD] FR-41(iii) sets one ramp step per 2-3 ticks at 100 kHz. The finding is not re-judged in this revision) |
 | 6 | 13 | `cr-coordinate-convention-mirror-ambiguity` | major | d-mech | **CHANGED** | The tab removes the CR pin-11 chamfer corner; the marker moves to (38.90, 76.40) and pin_identity_check.py must run again (§1.8; OT-7). Digest CB: N |
 | 6 | 14 | `eib-e-lead-max-lengths-geometrically-infeasible` | minor | b,a | **CLOSED** | The EIB, the W5 ribbon and the E-leads do not exist; the stages sit on the CCB (§2.3.1) |
 | 6 | 15 | `t-a-05-stale-j101-region-dims` | minor | b,doc | **CLOSED** | The EIB, the W5 ribbon and the E-leads do not exist; the stages sit on the CCB (§2.3.1) |
@@ -4808,6 +4909,8 @@ re-stated for the testbench facts (operator statement, 2026-11-10).
     order of the thermal table, and the spreading inside the CCB, which the lumped model omits (L-14).
 36. **U501 heatsink option (r2).** Select a heatsink of R_sa 60 C/W or less that fits the 4 x 4 mm package beside L501,
     and its adhesive or clip, if T-K-20 requires it (B-12; §3.7.4a).
+37. **eFuse part and permit scope (r3, r4).** Rule the CCB eFuse part (O-17) and decide whether the CCB adopts D-38
+    and r9-1 (O-18). Both rank with items 1-6, because each changes the schematic and the BOM.
 
 ### 8.2 Operator measurement list
 
@@ -4841,8 +4944,12 @@ and 19 are re-stated for the testbench facts (operator statement, 2026-11-10).
     T-K-01). r2: it also sets the channel gap g = H_u - 0.125 mm (5 mm minimum, 5-8 mm recommended, §1.3.2 rule 3) and
     the spacer length. Measure it at the inlet edge, at mid-body and at the tab.
 13. **Hole positions** against a 1:1 print of the pin field (M4; T-K-04).
-14. **Efficiency above VBUS 20 V**, at 21.5 V and 22.6 V (L-8; T-B-19).
-15. **SCL and SDA rise time at 400 kHz** on the CCB with the 2.7 kOhm MB pull-ups (§5.3 item 1; §5.8 item 9). r2: the
+14. **Efficiency above VBUS 20 V**, at 21.5 V and 22.6 V (L-8; T-B-19). Both points lie inside the healthy chopper onset band
+    of 21.35-23.10 V ([SIM2] Table 5.1, §5.8.7) (**Superseded 2026-11-15, review R2-SIM-6, an onset, not a V-MOT ceiling:** "Both points lie inside the healthy chopper band of 21.35-23.10 V
+    ([SIM2] Table 5.1)"). (**Superseded 2026-11-14, VR-1:** the r2 basis "V-MOT reaches 21.5 V".)
+15. **SCL and SDA rise time at 100 kHz** on the CCB with the 10 kOhm MB pull-ups (§5.3 item 1; §5.8 item 9): limit
+    1000 ns, predicted 593-839 ns for Cb 70-99 pF. (**Superseded 2026-11-16, r5, PM9 withdrawn, [WD] r9-30:** "SCL and
+    SDA rise time at 400 kHz on the CCB with the 2.7 kOhm MB pull-ups".) r2: the
     tall stack adds at most 0.47 pF per line and 1.08 ns of rise time at H_u 8 mm ([TS] §(d)). The bus capacitance
     itself remains unmeasured.
 16. **Plane noise at the comparator divider bottoms** during 1.5 MHz switching (L-9; T-K-09 step 5).
@@ -4864,13 +4971,13 @@ and 19 are re-stated for the testbench facts (operator statement, 2026-11-10).
 
 The registers below keep the IDs that the other sections cite. Section 8.1 ranks their content.
 
-#### 8.3.1 Schematic (O-1 to O-16)
+#### 8.3.1 Schematic (O-1 to O-18)
 
 | ID | Item | Class | Action |
 |---|---|---|---|
 | O-1 | 50 V 10 uF X7R MPN for C511, C512, C529-C531 and its DC-bias curve at 23.6 V (C_VBUS >= 2 uF, C_PMID >= 4 uF effective) | S | TODO(verify: manufacturer DC-bias data), T-A-04 |
 | O-2 | L501: confirm 11.1 A is Isat, its saturation definition and temperature basis, the heating current, and the -20 % tolerance; and confirm that L >= 0.70 uH at 6.5 A at T_max and the -20 % limit (§2.1.3 criterion) | S | TODO(verify: TDK SPM6530T datasheet) |
-| O-3 | Residual double fault: eFuse FET short together with a V-MOT excursion above 30 V reaches U501 VBUS (D307 VBR >= 36 V). No IC-side barrier exists below 25.2 V: VAC_OVP (26 V setting) trips at 25.2-26.8 V and VBUS_OVP at 25.2-26.2 V ([DS] EC), so the eFuse OVP (22.61-23.63 V) is the only protection in the 23.63-25.2 V window (D2 reason b) | I | Record in the risk register; no ACFET pair (D2) |
+| O-3 | Residual double fault: eFuse FET short together with a V-MOT excursion above 30 V reaches U501 VBUS (D307 VBR >= 36 V). No IC-side barrier exists below 25.2 V: VAC_OVP (26 V setting) trips at 25.2-26.8 V and VBUS_OVP at 25.2-26.2 V ([DS] EC), so the eFuse OVP (22.61-23.63 V) is the only protection in the 23.63-25.2 V window (D2 reason b). (**2026-11-14:** TPS26630 band. With the TCKE1401NM the band is 21.59-25.02 V with pin leakage and the window is 25.02-25.2 V, [SIM5] Table 1, §4.1; O-17) | I | Record in the risk register; no ACFET pair (D2) |
 | O-4 | Meaning of [DS] §6.3 ISW 5 A against the 5.51 A worst-case inductor peak; and the Q1_OCP / Q4_OCP cycle-by-cycle current-limit threshold (minimum and maximum) for L501 substitution (§2.1.3) | S | TODO(verify: TI E2E) |
 | O-5 | fsw tolerance; PROG detection window | S | TODO(verify: TI) |
 | O-6 | REGN loaded by the /CE and gate pull-ups (inherited deviation from [DS] §7.3.4.1) | S | Accept or ask TI E2E |
@@ -4884,6 +4991,8 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | O-14 | Round-3 EM13 uses the SDRV-to-BAT option deleted in [DS] rev C | S | Flag to the round-3 owner |
 | O-15 | Teensy 4.1 pad absolute maximum (basis for keeping U404) | I | TODO(verify: i.MX RT1060 datasheet) |
 | O-16 | Thermal: 2 W class charger loss ([STUDY] §1.6) beside the LM1084, ambient maximum 85 C ([DS] §6.3) | S | Layout/thermal section; T-B-16, T-B-19 re-specified |
+| O-17 | (2026-11-14) CCB eFuse part. The TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027, [WD] r9-20). With the TCKE1401NM of [WD] r9-20 the OVP rising band is 21.59-25.02 V and the UVLO rising band 9.06-10.55 V, both with pin leakage ([SIM5] Table 1). Criterion 9 of Table 1.14 and D2 reason (b) then fail by up to 1.02 V. The UVLO maximum lies 0.348 V above the FR-23 / FR-30 10.2 V threshold ([SIM5] §4.1). Every figure at 23.63 V needs a recalculation. (**2026-11-15, r4:** without pin leakage the [SIM5] bands are OVP 22.149-24.457 V and UVLO 9.444-10.158 V. The TCKE1401NM turns back on into current limit after a fast or SCP trip, for up to 190 ms ([SIM1] §5.7). Its datasheet forbids a capacitor on IMON (DS Rev. 3.0 §7.10, p.9); the R329/C329 filter loads IMON through 10 kOhm, TODO(verify: Toshiba IMON capacitive load through series R) (review R2-CRT-0). Lever (a) of [WD] J.2 item 74 is summarised in §1.11.1) | I | TODO(operator: CCB eFuse part); TODO(recalc: D-67) |
+| O-18 | (2026-11-15) CCB permit scope after [WD] r8-17 (D-38) and r9-1. The CR has no pack-OV permit: T22, F08, OVN and ARM_OK' are removed, and pack OV rests on FR-46 and OV_BATT at 8.5 V. The CR also has no heartbeat, QUAL one-shot, BT_OK, BTB_OFF or RGN_ON; its gate is the five-package r9-1 gate. §1.10, §1.12, §2.5.6-§2.5.9, §2.6, section 4 and §7.2 still describe the r8 permit. The D-38 reason applies to the CCB unchanged (review R2-CRT-2) | I | TODO(operator: adopt D-38 and r9-1 for the CCB, then revise those sections and the BOM) |
 
 #### 8.3.2 Layout (L-1 to L-15)
 
@@ -4896,7 +5005,7 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | L-5 | T_MB,0 and R_MB under the cell, and the LM1084 state | I | TODO(measure: M11, M12 with the T-K-02 heater step). r2: T_MB,0 and R_MB are record only (fan on, [LC] §8.6b); the LM1084 state (M11) stays open |
 | L-6 | Gap pad: material, interface resistance, compression force at the fitted thickness (H_u - 0.125 mm, 10-30 % compression), area 114.3 mm² around C506/C508, effect on retention. r2: not applicable (testbench with the bench fan, §3.7.4); kept as a record | I | TODO(verify: gap-pad datasheet); T-K-18 pull at F_pad; rev-A thermocouple test |
 | L-7 | Header and socket current rating and contact resistance | I | TODO(verify: Samtec TSW / socket datasheet), T-A-05 |
-| L-8 | Efficiency above VBUS 20 V | S | TODO(measure: rev-A bench efficiency at 21.5-22.3 V) |
+| L-8 | Efficiency above VBUS 20 V | S | TODO(measure: rev-A bench efficiency at 21.35-23.10 V, the healthy chopper onset band, [SIM2] Table 5.1, §5.8.7) (**Superseded 2026-11-15, review R2-SIM-6, an onset, not a V-MOT ceiling:** "the healthy chopper band, [SIM2] Table 5.1"). (**Superseded 2026-11-14, VR-1, invalid V_rgn / 0.8505 conversion:** "at 21.5-22.3 V") |
 | L-9 | Noise at the comparator divider bottoms during 1.5 MHz switching | I/S | TODO(measure: T-C-07 / S4-n class) |
 | L-10 | IPC-2221B clearance for the 16-30 V band | I | TODO(verify: IPC-2221B Table 6-1) |
 | L-11 | The first bulk rows of the Figure 3.2 cell span about 19 mm (x -10.5 to +8.2); rotated at x 28.2 they overlap the header keep-out (SYS row) and Z-E (PMID row) | S | Two-deep bulk-capacitor arrays inside x 22.4-37.5 (3.4.2); capture DRC |
@@ -4987,7 +5096,13 @@ Table 9.1 defines every citation key of this document. "Review folder" means
 | [TIDA] | `references/TI_BQ25798_design_files/` (fetched 2026-11-10), described in its `README.md`: SLUSDV2C, SLUUCB5E and the TIDA-050047 reference design (design guide TIDUEY1C rev C, schematic TIDM748, BOM TIDM749, assembly drawings TIDM750, layer plots TIDM751, Altium project TIDM752 REV_A1 with its PCB file, BOM `.xlsx`, Gerbers, fab notes GM10, stack-up GM12 and NC drill files) |
 | [TLP] | Review folder: `tida_layout_parse.py` and `tida_layout_parse_out.txt` (parse of the TIDA-050047 PCB file, Gerbers, drill file, rule export and schematic pin records around U1; positions in cell coordinates); cited by output section |
 | [TS] | Review folder: `tall_stack_calc.py` and `tall_stack_calc_out.txt` (r2 tall header stack checks: pin resistance and I2R, input-loop inductance, eFuse hard-short spike, signal loading, mechanical loads); cited by output section (a)-(e) |
+| [SIM1] | `hardware/charger_evm_r8/sim/hardshort/RESULTS.md`, revision 3 (2026-11-15): CR hard short, soft short and OVP trip at the EVM J1 end of W1/W2 (T-C-04, D103); §5.6 Table 7a (tFASTTRIP 3-8 us), §5.7 Table 7b (current-limit dwell). (**Superseded 2026-11-15, r4:** "revision 2 (2026-11-15)") |
+| [SIM2] | `hardware/charger_evm_r8/sim/chopper/RESULTS.md`: MB regen chopper onset, V-MOT after a U101 trip and the U101 OVP (VR-1, VR-2); §5.8 (2026-11-15) holds the [SIM5]-model OVP corners, lever (a) (Tables 5.5-5.8) and the onset and self-release statement (§5.8.7) |
+| [SIM4] | `hardware/charger_evm_r8/sim/permit/RESULTS.md`: CR permit logic, W5 bridges and the T2 race; §5.6a (2026-11-15) holds the brief T2 interruptions, the H1 inhibit latency and the C106/C107/C108 trade-off (Tables 5.4a-5.4d) |
+| [SIM5] | `hardware/charger_evm_r8/sim/efuse_decay/RESULTS.md`: U101 UVLO/OVP bands with pin leakage, FR-12(b1) decay and the FR-12(a2) ratio |
 | [UG] | TI SLUUCB5E, BQ2579xEVM user guide, `references/TI_BQ25798_design_files/BQ2579xEVM_SLUUCB5E.pdf`: schematic Figs 4-5 to 4-7, BOM Table 4-1, layer Figs 4-1 to 4-4, layout guidelines §3 |
+| [VR] | `hardware/charger_evm_r8/REVIEW_2026-11-14.md`: the read-only CR/EIB review of 2026-11-14; section 4 holds VR-1 to VR-4 |
+| [VRGN] | `docs/vrgn_measurement_error_2026-11-05.md`: the V_rgn investigation; §7.6 is the lab plan that fixes the true V-MOT |
 | [WD] | `docs/charger_bq25798_wiring_design_2026-11-05.md`, round 3 r6 (Path A): sections A-L, cited by section letter and number |
 
 ### 9.2 Other repository sources
@@ -5001,7 +5116,8 @@ Table 9.1 defines every citation key of this document. "Review folder" means
 ### 9.3 Component data sheets cited by name
 
 The following data sheets are cited by their document number in the text: TPS26630 (SLVSE94G), TLV3012 (SBOS300C),
-SN74LVC2G08 (SCES198N), RT1987 (DS-00, `references/Datasheets/RT1987_DS-00.pdf`) and BQ29200
-(`references/Datasheets/BQ29200_TI.pdf`). Data sheets marked TODO(verify) in the text (TDK SPM6530T, Samtec TSW and SSW,
+SN74LVC2G08 (SCES198N), RT1987 (DS-00, `references/Datasheets/RT1987_DS-00.pdf`), BQ29200
+(`references/Datasheets/BQ29200_TI.pdf`) and TCKE1401NM (Toshiba data sheet Rev. 3.0,
+`references/Datasheets/tcke1401nm.pdf`; added in r4). Data sheets marked TODO(verify) in the text (TDK SPM6530T, Samtec TSW and SSW,
 Murata GRM32ER71H106KA12L, Vishay TNPW, Nexperia BAV199, onsemi BAT54HT1G and 2N7002K, the i.MX RT1060) were not read for
 this document.

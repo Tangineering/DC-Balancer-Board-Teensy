@@ -1,5 +1,8 @@
 # Charger EVM r9: overnight review (2026-11-12 to 2026-11-13)
 
+**Superseded 2026-11-14 (REVIEW DOC-10): the board state of this document is superseded by `LAYOUT_DECISIONS.md`
+section 1. It stays the record of the routing round and its reversal paths.**
+
 This document records the overnight work that took the CR from a frozen netlist to a routed board and a fabrication
 package, and lists the decisions and open items that the operator should review. It also records the D-60 outline
 trim and the four 6-32 holes added on 2026-11-13 after the overnight round, and the package re-export that followed.

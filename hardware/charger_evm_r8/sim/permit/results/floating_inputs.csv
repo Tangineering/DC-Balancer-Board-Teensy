@@ -1,0 +1,20 @@
+scenario,class_,input,net
+"normal (Teensy running, all leads on)",no-connect by design (internal pull),U101 EN (pin 12),nc
+"normal (Teensy running, all leads on)",no-connect by design (internal pull),U101 MODE (pin 11),nc
+Teensy reset (pins high-Z),no-connect by design (internal pull),U101 EN (pin 12),nc
+Teensy reset (pins high-Z),no-connect by design (internal pull),U101 MODE (pin 11),nc
+J-TAP unplugged,no-connect by design (internal pull),U101 EN (pin 12),nc
+J-TAP unplugged,no-connect by design (internal pull),U101 MODE (pin 11),nc
+W5 all nine wires open,no-connect by design (internal pull),U101 EN (pin 12),nc
+W5 all nine wires open,no-connect by design (internal pull),U101 MODE (pin 11),nc
+E1 lead off (EVM REGN not at the EIB),floating,Q201 gate,e:Q201_G
+E1 lead off (EVM REGN not at the EIB),floating,Q202 gate,e:Q202_G
+E1 lead off (EVM REGN not at the EIB),floating,Q203 gate,e:Q203_G
+E1 lead off (EVM REGN not at the EIB),no-connect by design (internal pull),U101 EN (pin 12),nc
+E1 lead off (EVM REGN not at the EIB),no-connect by design (internal pull),U101 MODE (pin 11),nc
+E5 lead off,no-connect by design (internal pull),U101 EN (pin 12),nc
+E5 lead off,no-connect by design (internal pull),U101 MODE (pin 11),nc
+E3 and E2 leads off,no-connect by design (internal pull),U101 EN (pin 12),nc
+E3 and E2 leads off,no-connect by design (internal pull),U101 MODE (pin 11),nc
+CR lifted off the MB J1 (CHG_ARM not connected),no-connect by design (internal pull),U101 EN (pin 12),nc
+CR lifted off the MB J1 (CHG_ARM not connected),no-connect by design (internal pull),U101 MODE (pin 11),nc

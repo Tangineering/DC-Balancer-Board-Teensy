@@ -16,6 +16,19 @@ Quantities are for ONE unit, with no spares:
                   merged by MPN with the quantities summed; columns for the Digi-Key BOM Manager / list upload
 The script refuses when a fitted reference has no ordering-BOM row, when a netlist MPN names a different part
 than its row, or when a system row has no parseable design quantity.
+
+2026-11-14 round (REVIEW_2026-11-14.md BOM-1, BOM-3, BOM-4, BOM-6, BOM-8, BOM-9, BOM-10, BOM-11): the netlist now
+carries the ordered MPNs, so a netlist MPN equal to the SUBST target of its row is accepted; the stencil rows are
+written per board; SUBST targets carry their rated voltage (VMAX); boilerplate and wrong-board note fragments are
+removed (clean_notes); the Digi-Key SKU of the upload result fills any row with an empty Vendor SKU; ALTERNATES writes
+the explicitly labelled alternate and bench lines (not fitted by default) to a separate opt-in file,
+digikey_optional.csv (fix round 2026-11-15; before it they were appended to digikey_import.csv). Run:
+python gen/bom_split.py bom_2026-11-14
+
+Phase C round (2026-11-15, second review C:/.../phaseC/review2_findings.md, IDs R2-*): further stale notes on settled
+parts are rewritten (R2-BOM-1, R2-LOG-1); the Digi-Key and Mouser Description cells are cut at a word boundary, not
+mid-word (R2-BOM-6, desc120()); the ALTERNATES table also writes five opt-in SPARE lines (R2-BOM-0, R2-BOM-5,
+R2-CRT-1); the EIB stencil row no longer carries the CR stencil history (R2-BOM-1).
 """
 import csv
 import os
@@ -77,6 +90,7 @@ for k, r in enumerate(DATA):
 
 boards = {b: netlist("%s/%s.net" % (b, b)) for b in ("cr", "eib")}
 errors = []
+mpn_pending = []
 used = set()
 board_rows = {}
 for b, parts in boards.items():
@@ -97,24 +111,34 @@ for b, parts in boards.items():
             if nm and d67 and nm == d67:
                 pass
             elif nm and row_mpn not in nm and not row_mpn.startswith(nm) and not re.search(r"t-a-05|class|selected", nm):
-                errors.append("%s %s: netlist MPN %r vs row MPN %r" % (b, ref, parts[ref]["mpn"], DATA[k][C["Mft. SKU"]]))
+                # 2026-11-14 (BOM-11): the netlist may carry the ordered SUBST target; checked after SUBST below
+                mpn_pending.append((b, ref, parts[ref]["mpn"], DATA[k][C["Mft. SKU"]]))
             groups.setdefault(k, []).append(ref)
             used.add(k)
     board_rows[b] = groups
 
+# 2026-11-14: the fab packages of the 2026-11-14 boards (written 2026-11-15 by gen/export.sh <board> 2026-11-14;
+# update_2026-11-14/notes_phaseB_export.md)
+PKG = {"cr": "fab/cr_2026-11-14", "eib": "fab/eib_2026-11-14"}
 # the board rows, restated from the fab package READMEs (the 2026-11-11 rows describe the pre-trim CR and the
 # pre-D-25 EIB outline)
 PCB_SPEC = {
     "cr": ("4-layer, 1.6 mm, 1 oz outer / 0.5 oz inner (OSH Park 4-layer, D-29), ENIG; 10-corner outline with 1.0 mm "
            "fillets (D-62), 40.02 x 64.81 mm bounding box, 2327.7 mm2; four 3.70 mm NPTH for 6-32 (MH1-MH4, D-60)",
            "Order 6 (operator ruling 2026-11-13: \"Use 6\"; OSH Park sells boards in multiples of 3). Upload: "
-           "fab/cr_2026-11-13f/kikit_oshpark/gerbers.zip (the board after D-69; copper as D-66); "
-           "fab/cr_2026-11-13/, fab/cr_2026-11-13b_oshpark/, 13c, 13d and 13e are superseded.", "OSH Park"),
+           "%s/kikit_oshpark/gerbers.zip, the package of the 2026-11-14 board, exported 2026-11-15 by gen/export.sh "
+           "cr 2026-11-14 (tracks, vias, pads and zone outlines as D-66/D-69; F.Cu pour fill changed at J1 pin 18 by "
+           "D-75; silkscreen D-72 to D-78; stack-up D-76); fab/cr_2026-11-13/, "
+           "fab/cr_2026-11-13b_oshpark/, 13c, 13d, 13e and 13f are superseded." % PKG["cr"], "OSH Park"),
     "eib": ("2-layer, 1.6 mm, 1 oz, ENIG, 24.0 x 38.0 mm (D-25), two M3 holes; AGND pours on both layers stitched "
             "by vias (D-63); J201 as wire pads (D-66)",
             "A separate 2-layer order at OSH Park (not on the CR panel). OSH Park sells boards in multiples of 3; the "
-            "E BOM asked for 5; order 3, one lot (operator ruling 2026-11-13, chat: \"Order 3\"). Upload: fab/eib_2026-11-13c/kikit_oshpark/gerbers.zip "
-            "(D-68; fab/eib_2026-11-13/ and fab/eib_2026-11-13b/ are superseded).",
+            "E BOM asked for 5; order 3, one lot (operator ruling 2026-11-13, chat: \"Order 3\"). Upload: "
+            "%s/kikit_oshpark/gerbers.zip, the package of the 2026-11-14 board, exported 2026-11-15 by gen/export.sh "
+            "eib 2026-11-14 (board marking \"EIB r8 2026-11-14\"; tracks, vias, pads and zone outlines as D-68; "
+            "F.Cu and B.Cu pour fill changed at J201 by D-70; no paste on the DNP pads, D-71); fab/eib_2026-11-13/, "
+            "13b and 13c are superseded."
+            % PKG["eib"],
             "OSH Park"),
 }
 SYS_DQ = re.compile(r"design qty (\d+)")
@@ -175,21 +199,37 @@ for k, r in enumerate(DATA):
         out_rows[b].append(per_unit(r, 1, None, "Per-unit qty = 1 board."))
         continue
     if cat == "Assembly":                                  # the stencils (D-69: one per board, OSH Stencils)
-        for b_, pkg in (("cr", "fab/cr_2026-11-13f/gerbers/cr-F_Paste.gtp"),
-                        ("eib", "fab/eib_2026-11-13c/gerbers/eib-F_Paste.gtp")):
+        # 2026-11-14 (BOM-1, BOM-2): PCB Names, specification and note per board; the EIB stencil has no apertures on
+        # the 14 DNP footprints (gen/eib_dnp_paste.py, update_2026-11-14/notes_eib.md section 2.2)
+        STENCIL = {
+            "cr": ("upload %s/gerbers/cr-F_Paste.gtp. Finest pitch: U101 0.5 mm VQFN; U101 exposed-pad paste "
+                   "windows about 55 %% coverage (D-69). Solder paste NOT IDENTIFIED (a Type 4 paste is the usual "
+                   "choice for the 0.5 mm U101 pitch)" % PKG["cr"],
+                   "Smallest area ratio at 4 mil: U101 pins 0.96; at 5 mil 0.76; IPC-7525 asks >= 0.66."),
+            "eib": ("upload %s/gerbers/eib-F_Paste.gtp. Apertures on the fitted pads only (62 pads): the 14 DNP "
+                    "footprints C203, C204, E4, E6, R258-R265, U203 and U204 carry a -2.0 mm paste margin, so the "
+                    "stencil has no aperture on them (gen/eib_dnp_paste.py). Finest pitch: 0.65 mm (U201 DCT, U202 "
+                    "SC-70). Solder paste NOT IDENTIFIED" % PKG["eib"],
+                    "Smallest area ratio at 4 mil: U202 SC-70 1.24; at 5 mil 0.98; IPC-7525 asks >= 0.66."),
+        }
+        for b_ in ("cr", "eib"):
             s_ = list(r)
             s_[C["Part"]] = "Solder paste stencil (%s top side)" % b_.upper()
+            s_[C["PCB Names"]] = "%s top side (reflow assembly)" % b_.upper()
             s_[C["Manufacturer"]], s_[C["Vendor"]] = "OSH Stencils", "OSH Stencils"
             s_[C["Mft. SKU"]] = "Stainless steel 4 mil, frameless"
             s_[C["Vendor SKU"]], s_[C["Link"]] = "", "https://www.oshstencils.com/"
             s_[C["Specification"]] = ("Stainless steel 4 mil (0.1 mm) frameless stencil, top side only (no bottom "
-                                      "paste); upload %s. Solder paste NOT IDENTIFIED (a Type 4 paste is the usual "
-                                      "choice for the 0.5 mm U101 pitch)" % pkg)
+                                      "paste); %s" % STENCIL[b_][0])
+            # phase C (R2-BOM-1): the 2026-11-11 row described the CR stencil only, so its text stays as the CR
+            # row's superseded history; the EIB row is new by D-69 and states that instead
+            hist = ("Superseded: %s" % r[C["Notes"]] if b_ == "cr" else
+                    "The 2026-11-11 ordering BOM had no EIB stencil row; this row is new by D-69 (one stencil per "
+                    "board).")
             s_[C["Notes"]] = ("Operator ruling 2026-11-13 (chat: \"I would order from OSH Stencil\"; \"Yes, do both\"): "
                               "4 mil stainless, one stencil per board in one order (OSH Stencils prices by area per "
-                              "material, so a combined sheet saves only the border). Smallest area ratio at 4 mil: "
-                              "U101 pins 0.96 (CR), U202 SC-70 1.24 (EIB); at 5 mil 0.76 and 0.98; IPC-7525 asks >= 0.66. "
-                              "U101 exposed-pad windows about 55 %% coverage (D-69). Superseded: %s" % r[C["Notes"]])
+                              "material, so a combined sheet saves only the border). %s %s"
+                              % (STENCIL[b_][1], hist))
             out_rows[b_].append(per_unit(s_, 1, None, "Per-unit qty = 1."))
         continue
     m = SYS_DQ.search(r[C["Notes"]])
@@ -211,9 +251,6 @@ for k, r in enumerate(DATA):
         errors.append("system row %r (%s): no design quantity" % (part, r[C["Mft. SKU"]]))
         continue
     out_rows["system"].append(per_unit(r, dq, None, "Per-unit qty = %d (one build)." % dq))
-
-if errors:
-    sys.exit("REFUSED:\n  " + "\n  ".join(errors))
 
 # ---- Digi-Key upload review, 2026-11-13 ----------------------------------------------------------------------
 # The operator uploaded digikey_import.csv to Digi-Key; the result is recorded in
@@ -279,10 +316,12 @@ SUBST = {
                            "Murata GRM31CR72A105KA01L has 0 stock at Digi-Key, restock 22-Feb-2027 (2026-11-13); "
                            "Samsung CL31B105KCHSFNE is a direct substitute listed by Digi-Key."),
     "C3225X7S2A475K200AB": ("CNC6P1X7R2A475K250AE", "TDK", "445-181657-1-ND",
-                            "4.7 uF 100 V X7R 1210 (2.80 mm max thickness); effective >= 3 uF at 23.6 V required",
+                            "4.7 uF 100 V X7R 1210 (2.50 mm, Digi-Key description); effective >= 3 uF at 23.6 V "
+                            "required",
                             "TDK C3225X7S2A475K200AB has 0 stock at Digi-Key, restock 15-Feb-2027 (2026-11-13); TDK "
-                            "CNC6P1X7R2A475K250AE (X7R, soft termination) is in stock. TODO(verify: TDK DC-bias "
-                            "curve) effective capacitance >= 3 uF at 23.6 V before assembly."),
+                            "CNC6P1X7R2A475K250AE (X7R, soft termination) is in stock. DC bias closed 2026-11-13: "
+                            "about 3.04 uF typ at 23.6 V and 2.96 uF at the 24.41 V D-67 OVP maximum (TDK Product "
+                            "Center; bom_2026-11-13/README.md section 4.4); T-A-04 measures the fitted part."),
     "BAV199,215": ("BAV199-7-F", "Diodes Incorporated", "BAV199-FDICT-ND",
                    "BAV199 series pair, 85 V, 140 mA, IR <= 5 nA at 75 V, SOT-23",
                    "Nexperia BAV199,215 has 0 stock at Digi-Key, restock 19-Nov-2026 (2026-11-13); Diodes "
@@ -313,9 +352,12 @@ SUBST = {
     "2N7002KT1G": ("2N7002BK,215", "Nexperia USA Inc.", "1727-4789-1-ND",
                    "60 V N-MOSFET, SOT-23, Vgs(th) max 2.1 V",
                    "onsemi 2N7002KT1G has 0 stock at Digi-Key with no restock date (2026-11-13); Nexperia "
-                   "2N7002BK,215 has the same SOT-23 pinout and a lower maximum threshold (2.1 V against 2.3 V), "
-                   "which suits the 3.3 V gate drive of Q201 and Q202. Diodes 2N7002K-7 was not taken (Vgs(th) max "
-                   "2.5 V)."),
+                   "2N7002BK,215 has the same SOT-23 pinout and a lower maximum threshold (2.1 V against 2.3 V). "
+                   "The Q201 and Q202 gates are pulled to REGN (4.8-5.2 V at VBUS 15 V, SLUSDV2C p.15) through "
+                   "R252 and R254 47.0 kOhm and sunk by the open-drain U202 and U201 (gen/netlist.py), not driven "
+                   "from 3.3 V. 2N7002BK Vgs(th) max TODO(verify: Nexperia 2N7002BK datasheet). Diodes 2N7002K-7 "
+                   "was not taken (Vgs(th) max 2.5 V). (Superseded 2026-11-14, BOM-9: \"which suits the 3.3 V "
+                   "gate drive of Q201 and Q202\".)"),
     "GRM1885C1H222JA01D": ("C1608C0G1H222J080AA", "TDK", "445-1297-1-ND", "2.2 nF 50 V C0G 0603",
                            "Murata GRM1885C1H222JA01D has 0 stock at Digi-Key, restock 08-Feb-2027 (2026-11-13); TDK "
                            "C1608C0G1H222J080AA is Digi-Key's direct substitute."),
@@ -367,6 +409,14 @@ MOUSER = {
     "ERA-3AEB6492V": "667-ERA-3AEB6492V",         # 1,948 in stock, $0.10 at 1
     "TNPW060351K1BEEA": "71-TNPW060351K1BEEA",    # 6,705 in stock, $0.26 at 1
 }
+# 2026-11-14 (BOM-11): a netlist MPN equal to the SUBST target of its row is the ordered part
+for b, ref, nmpn, rmpn in mpn_pending:
+    tgt = SUBST.get(rmpn.strip(), ("",))[0]
+    if not (tgt and tgt.replace(" ", "").lower() == nmpn.replace(" ", "").lower()):
+        errors.append("%s %s: netlist MPN %r vs row MPN %r" % (b, ref, nmpn, rmpn))
+if errors:
+    sys.exit("REFUSED:\n  " + "\n  ".join(errors))
+
 # kept on the BOM but held out of the Digi-Key file: no authorized stock (D-67 resolved the U101 hold)
 DK_HOLD = {}
 # Digi-Key order quantity above the BOM quantity (sellable minimum)
@@ -431,8 +481,155 @@ if os.path.exists(UPLOAD):
 for b in ("cr", "eib", "system"):
     for r in out_rows[b]:
         mpn = r[C["Mft. SKU"]].strip()
-        if mpn in dk_pn and mpn not in {s[0] for s in SUBST.values()}:
+        # 2026-11-14 (BOM-10): also when the MPN is a SUBST target but the row has no SKU (C102c)
+        if mpn in dk_pn and (mpn not in {s[0] for s in SUBST.values()} or not r[C["Vendor SKU"]].strip()):
             r[C["Vendor SKU"]] = dk_pn[mpn]
+
+# ---- 2026-11-14 round: rated voltage, row notes, PLT1M-C (BOM-3, BOM-4, BOM-6, BOM-8, sim 3, decisions) ----------
+# Voltage Max [V] of the substituted parts (BOM-3). Sources: Digi-Key descriptions of the 13b upload result
+# (GRM188R72A104KA35D 'CAP CER 0.1UF 100V', CL21B106KOQNNNE 'CAP CER 10UF 16V', GMC21X5R106K50NT 'CAP0805 X5R 10UF
+# 10% 50V'); TCKE1401NM DS Rev. 3.0 Table 9.1, input voltage operating range 4.7 to 75 V.
+VMAX = {"GRM188R72A104KA35D": "100", "CL21B106KOQNNNE": "16", "GMC21X5R106K50NT": "50", "TCKE1401NM,R1F": "75"}
+UPLOAD_B = os.path.join("bom_2026-11-13", "digikey_upload_result_2026-11-13b.csv")
+dk_desc = {}
+if os.path.exists(UPLOAD_B):
+    for u in csv.DictReader(open(UPLOAD_B, encoding="utf-8")):
+        dk_desc[u["Digi-Key Part Number"]] = u["Description"]
+BOILER = [r"No Digi-Key product page URL was found; Link is the Digi-Key keyword search; Vendor SKU blank\.\s*",
+          r"Price and stock not read: digikey\.com, mouser\.com, newark\.com, arrow\.com and octopart\.com served "
+          r"bot-check or 403 pages to the built-in browser on 2026-11-11\.\s*",
+          r"Price and stock not read\.\s*",
+          r"Link and Vendor SKU from the digikey\.com search-engine index, not read on the live page; confirm before "
+          r"ordering\.\s*",
+          r"Vendor SKU from the search-engine index; no product page URL found \(Link is the keyword search\)\.\s*",
+          r"Only the tape-and-reel SKU 296-13278-2-ND was seen in the index; the cut-tape SKU was not seen, so Vendor "
+          r"SKU is blank\.\s*",
+          r"Index snippets disagree on stock \(one shows backorder\)\.\s*",
+          r"Search-index snippet \(undated\) reported Digi-Key stock 0 with a restock date in 2027; availability is a "
+          r"risk - TODO\(verify\)\.\s*",
+          r"Product URL from a digikey\.jp index entry\.\s*",
+          # phase C (R2-BOM-1): the lower-case J102 variant
+          r"Link is the Digi-Key keyword search for [^;]+; Vendor SKU blank; price and stock not read\.\s*"]
+MURATA_V = r"Voltage from the Murata part code \(TODO\(verify\) on the spec sheet; murata\.com returned 403\)\.\s*"
+# wrong-board fragments of shared ordering rows (BOM-4): (board, MPN) -> patterns
+DROP = {
+    ("eib", "CRCW06031K00FKEA"): [r"r9 \(2026-11-12\): R121, R125.*?the spare kept\)\.\s*",
+                                  r"Power: the R106s design dissipation.*?TODO\(verify: doc 20035\)\.\s*"],
+    ("eib", "GRM188R72A104KA35D"): [r"r9 \(2026-11-12\): C109, C112.*?\(D-38, 2026-11-12\)\.\s*",
+                                    r" and is already the C102c part, so the two lines merge"],
+    ("eib", "CRCW060310K0FKEA"): [r"r9 \(2026-11-12\): R118 and R120 removed.*?R274 stays fitted\.\s*"],
+    ("eib", "CRCW060347K0FKEA"): [r"r9 \(2026-11-12\): R124 \(FCCEIL\) removed \(tap review\)\.\s*"],
+    ("system", "CRCW060347K0FKEA"): [r"r9 \(2026-11-12\): R124 \(FCCEIL\) removed \(tap review\)\.\s*"],
+}
+# stale statements on settled parts (BOM-4): MPN -> [(pattern, replacement)]
+REWRITE = {
+    "CL31B105KCHSFNE": [(r"Voltage rating 100 V: confirmed by distributor listings.*?\(T-A-04/T-A-05\)\.\s*", ""),
+                        (r"FLAG: Octopart.*?TODO\(verify: TDK datasheet\)\.\s*", "")],
+    "CNC6P1X7R2A475K250AE": [(r"Voltage rating 100 V: confirmed by distributor listings.*?\(T-A-04/T-A-05\)\.\s*", ""),
+                             (r"FLAG: Buerklin.*?2 x 2\.2 uF 100 V 1210\.\s*", ""),
+                             (r"Full MPN of the section E 'C3225X7S2A475K class'\.\s*", "")],
+    "ERA-3AEB6492V": [(r"Range checked in Vishay TNPW e3 datasheet doc 28758 \(rev 10-Apr-2026\): 0603 0\.1 %/25 ppm "
+                       r"covers 3\.5 Ohm to 332 kOhm; 66\.5 k in range; packaging code EA as on the other 0603 TNPW "
+                       r"rows\.\s*",
+                       "Panasonic ERA-3A resistance range for 64.9 kOhm 0.1 %/25 ppm TODO(verify: Panasonic ERA-3A "
+                       "datasheet). ")],
+    "TNPW060351K1BEEA": [(r"49\.9 k in range", "51.1 k in range")],
+    "STPS2H100A": [(r"candidate - T-A-05 datasheet check required\.\s*",
+                    "Ordered part (2026-11-14 decision); T-A-05 still reads IR at 23.6 V / 60 C from the IR(VR) curve. "
+                    "(Superseded 2026-11-15, R2-BOM-1: \"candidate - T-A-05 datasheet check required.\") "),
+                   (r"The netlist \(gen/netlist\.py, cr\.net\) and design section E leave the D103 MPN open.*$",
+                    "Since 2026-11-14 the netlist, the board fields and design section E (r9-25 D103 row) carry "
+                    "STPS2H100A (BOM-11). (Superseded 2026-11-15, R2-BOM-1: \"design section E still reads "
+                    "'selected in T-A-05' (records step)\".)")],
+    # phase C (2026-11-15, REVIEW2 R2-BOM-1): stale statements on settled parts
+    "C0603C223K5RACTU": [(r"TODO\(verify: Murata\) GRM188R71H223KA01D \(22 nF 50 V X7R 0603\): part number from the "
+                          r"decision record, not read on a Murata or distributor page\.\s*", ""),
+                         (r"Datasheet URL follows the Murata product-page pattern for the 0603 part, not opened, "
+                          r"TODO\(verify: Murata\)\.\s*", "")],
+    "BAV199-7-F": [(r"Index snippet \(undated\) showed Digi-Key out of stock with restock 08-Dec-2026; listed direct "
+                    r"substitutes are Diodes BAV199-7-F and onsemi BAV199LT1G - TODO\(verify\) leakage equivalence in "
+                    r"T-A-05 before substituting\.\s*",
+                    "The substitution to BAV199-7-F is made (2026-11-13). Confirm the leakage of the fitted part in "
+                    "T-A-05, TODO(verify: Diodes BAV199 datasheet IR at 75 V). ")],
+    "43045-1012": [(r"T5 \(A4\) is diagonal to T10 \(B5\): the gate rule \(T5/T6/T10 pairwise non-adjacent\) is met, "
+                    r"the recommended diagonal separation is not - open item for operator confirmation\.\s*",
+                    "T5 (A4) is diagonal to T10 (B5): the gate rule (T5/T6/T10 pairwise non-adjacent) is met, the "
+                    "recommended diagonal separation is not; accepted by the operator 2026-11-12 (gen/netlist.py J102 "
+                    "comment). ")],
+    "CRCW06034K99FKEA": [(r"The MPN follows the CRCW0603 code pattern of the other rows, TODO\(verify: Vishay doc "
+                          r"20035 ordering code\)\.\s*",
+                          "Ordering code confirmed by the 13b upload match: 541-4.99KHCT-ND, \"RES SMD 4.99K OHM 1% "
+                          "1/10W 0603\" (bom_2026-11-13/digikey_upload_result_2026-11-13b.csv). ")],
+    "SN74LVC1G11DBVR": [(r"TODO\(verify: TI SN74LVC1G11 Pin Functions table\) the DBV pinout against the DCK pinout, "
+                         r"and re-check B\.8 pin by pin\.\s*",
+                         "DBV pinout closed: TI SCES487I (revised November 2024) Figure 4-1 and Table 4-1 give one "
+                         "pinout for DBV and DCK (A 1, GND 2, B 3, Y 4, VCC 5, C 6), as captured in gen/netlist.py "
+                         "lvc1g11() and on the U107 pads (LAYOUT_DECISIONS section 11 item 18; re-read 2026-11-15, "
+                         "R2-LOG-1). ")],
+}
+MOUSER_SRC = ("Mouser part number, stock and price from the Mouser listing on findchips.com, 2026-11-13 "
+              "(bom_2026-11-13/README.md section 4.8).")
+# notes added in the 2026-11-14 round: (board, MPN) -> text appended
+ADD = {
+    ("cr", "STPS2H100A"): "Alternate (2026-11-14 decision, not adopted; operator question): onsemi MBRA2H100T3G, "
+                          "same D_SMA land, pin 1 = cathode, IFSM 130 A; like STPS2H100A it fails the T-A-05 "
+                          "'VF at 3 A <= 0.5 V' limit, and the 130 A / 1 us pulse rating is open for both "
+                          "(sim/hardshort/RESULTS.md). It is the opt-in ALT D103 line of digikey_optional.csv (2 parts for a test fit, "
+                          "order 3).",
+    ("cr", "GRM1885C1H102JA01D"): "Option at assembly (2026-11-14 decision, not adopted): C108 = 470 pF "
+                                  "GRM1885C1H471JA01D, a partial T2-race improvement only (bom_2026-11-14/README.md "
+                                  "section 5.3); opt-in ALT C108 line of digikey_optional.csv. C129 stays 1.0 nF.",
+    ("cr", "CRCW0603100RFKEA"): "2026-11-14 decision (not adopted: raise to 3.16-10.5 kOhm): R130 and R131A stay "
+                                "100 Ohm. The former R131A reason 'conductor 7 has no GND neighbour' is void under "
+                                "D-66: a CR 7-3 bridge pulls the CR rail to 1.98-2.36 V (sim/permit/RESULTS.md Table "
+                                "5.6). The W5 grid mitigation is an operator question.",
+    ("cr", "TLV3012BIDBVR"): "B suffix required, no non-B substitute (SBOS300C 9.4.4; sim/comparators/RESULTS.md "
+                             "section 5.6: the BAV199 clamp level 3.75-4.03 V exceeds the non-B V+ + 0.5 V absolute "
+                             "maximum).",
+    ("cr", "SN74LVC2G08IDCTRQ1"): "Operating range -40 to 85 C (SCES557E p.14 package option addendum); no "
+                                  "requirement above 85 C was found (REVIEW_2026-11-14 BOM-8).",
+    ("cr", "TCKE1401NM,R1F"): "Voltage Max 75 V: TCKE1401NM DS Rev. 3.0 Table 9.1 (input voltage 4.7 to 75 V); "
+                              "80 V absolute maximum (Table 8.1).",
+    ("cr", "43045-1012"): "Mate (phase C 2026-11-15, R2-INT-5): built from workshop stock (operator ruling "
+                          "2026-11-13); the Molex 2147561101 cable is not ordered (digikey_skipped.csv). The wire "
+                          "gauge against the R170/R171 joints is TODO(verify: workshop wire, T-A-05).",
+}
+
+
+def clean_notes(b, r):
+    mpn, n = r[C["Mft. SKU"]].strip(), r[C["Notes"]]
+    sku, vendor = r[C["Vendor SKU"]].strip(), r[C["Vendor"]].strip().lower()
+    if sku:
+        for p in BOILER:
+            n = re.sub(p, "", n)
+        if vendor == "mouser":
+            n = n.rstrip() + " " + MOUSER_SRC
+        elif sku in dk_desc:
+            n = n.rstrip() + " Digi-Key part number, stock and price from the upload result of 2026-11-13 " \
+                "(bom_2026-11-13/digikey_upload_result_2026-11-13b.csv)."
+    if sku in dk_desc:
+        n = re.sub(MURATA_V, "Voltage rating from the Digi-Key description '%s' (upload result 2026-11-13b). "
+                   % dk_desc[sku], n)
+    for p in DROP.get((b, mpn), []):
+        n = re.sub(p, "", n)
+    for p, rep in REWRITE.get(mpn, []):
+        n = re.sub(p, rep, n)
+    if (b, mpn) in ADD:
+        n = n.rstrip() + " " + ADD[(b, mpn)]
+    r[C["Notes"]] = re.sub(r"\s{2,}", " ", n).strip()
+    if mpn in VMAX:
+        r[C["Voltage Max [V]"]] = VMAX[mpn]
+
+
+for b in ("cr", "eib", "system"):
+    for r in out_rows[b]:
+        clean_notes(b, r)
+        if r[C["Mft. SKU"]].strip() == "PLT1M-C":            # BOM-6: sold and counted per tie
+            r[C["BOM Units"]] = "ea"
+            r[C["Specification"]] = "Panduit Pan-Ty miniature cable tie, 2.5 mm wide, natural, one tie"
+            r[C["Notes"]] = re.sub(r"One 100-pack \(PLT1M-C is a 100-piece pack, TODO\(verify\)\)\.\s*", "",
+                                   r[C["Notes"]])
+PRICE_Q1["PLT1M-C"] = 0.229                                 # 13b upload result (Bulk, MOQ 1)
 
 os.makedirs(OUT, exist_ok=True)
 SUMMARY = ["Total Assembly Cost:", "$0.00", "", "PCB components:", "", "PCB unique parts:", ""]
@@ -550,6 +747,24 @@ def customer_ref(groups):
     return bare if len(bare) <= CREF_MAX else None
 
 
+DESC_MAX = 120
+# phase C (R2-BOM-6): a shorter description where the word-boundary cut would drop a load-bearing clause
+DESC_SHORT = {"43045-1012": "Molex Micro-Fit 3.0 43045-1012, vertical header, 3.00 mm pitch, dual row, 10 circuits, "
+                            "PCB pegs, tin, 8.5 A per contact"}
+
+
+def desc120(mpn, d):
+    """The Description cell: at most DESC_MAX characters, cut at a word boundary (phase C, R2-BOM-6; was d[:120],
+    which cut 'tin, 8.5 A p' and '-L plating ' mid-clause)."""
+    d = DESC_SHORT.get(mpn, d)
+    if len(d) <= DESC_MAX:
+        return d
+    cut = d[:DESC_MAX]
+    if d[DESC_MAX] not in " ,;)":
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;(-")
+
+
 with open(os.path.join(OUT, "digikey_import.csv"), "w", encoding="utf-8", newline="") as f:
     w = csv.writer(f, lineterminator="\r\n")
     w.writerow(["Quantity", "Digi-Key Part Number", "Manufacturer Part Number", "Manufacturer", "Description",
@@ -566,8 +781,68 @@ with open(os.path.join(OUT, "digikey_import.csv"), "w", encoding="utf-8", newlin
             qty = order_qty(qty, price)
             if mpn in ORDER_QTY:
                 qty = max(qty, ORDER_QTY[mpn][0])
-            w.writerow([qty, e["sku"], mpn, e["mfr"], e["desc"][:120], cr_, "; ".join(refs), bom_q,
+            w.writerow([qty, e["sku"], mpn, e["mfr"], desc120(mpn, e["desc"]), cr_, "; ".join(refs), bom_q,
                         "" if price is None else "%.2f" % price])
+
+# ALTERNATES (2026-11-14 decisions, adopt_change false): explicitly labelled lines, not fitted by default. They go to
+# the opt-in file digikey_optional.csv, not to digikey_import.csv (fix round 2026-11-15, check1 issue 8): an opt-out
+# line could reach the order unnoticed, and the ALT C108 line shares 490-1443-1-ND with the C106/C107 main line, which
+# a Digi-Key list upload can merge into one line of the summed quantity. BOM Quantity: ALT C108 is one per CR of the
+# order of 6; ALT D103 is 2, a test fit on two CRs (the 2026-11-14 D103 decision recommends 2-3 parts for an operator
+# question; check1 issue 1), with an explicit order quantity of 3; the bench lines are the bench count. Without an
+# explicit order quantity the attrition rule applies.
+# (Digi-Key PN, MPN, manufacturer, description, Customer Reference, designators, BOM qty, USD price at 1 or None,
+#  explicit order qty or None)
+ALTERNATES = [
+    ("MBRA2H100T3GOSCT-ND", "MBRA2H100T3G", "onsemi",
+     "ALTERNATE D103 (operator question 2026-11-14): Schottky 100 V 2 A SMA; not fitted by default",
+     "ALT D103 MBRA2H100T3G (test fit 2 CR)", "CR: D103 alternate, test fit on 2 CRs", 2, 0.98, 3),
+    ("490-1443-1-ND", "GRM1885C1H471JA01D", "Murata Electronics",
+     "ALTERNATE C108 470 pF 50 V C0G 0603 (option at assembly 2026-11-14)",
+     "ALT C108 470pF option (6 CR)", "CR: C108 alternate x 6 CR", 6, 0.069, None),
+    ("490-9669-1-ND", "GRM1885C1H472JA01D", "Murata Electronics",
+     "BENCH ONLY 4.7 nF 50 V C0G 0603 (C107 brief-interruption test 2026-11-14); never fit in service",
+     "BENCH C107 4.7nF test only", "bench: C107 test", 4, 0.11, None),
+    ("490-9666-1-ND", "GRM1885C1H103JA01D", "Murata Electronics",
+     "BENCH ONLY 10 nF 50 V C0G 0603 (sim 4 section 8 test 2, 2026-11-14); never fit in service",
+     "BENCH C106/C107 10nF test only", "bench: C106/C107 test", 4, None, None),
+    # phase C (2026-11-15) SPARE lines: opt-in, never in digikey_import.csv. They share the Digi-Key part number of
+    # a main line, so a list upload may merge them into that line; for a spare the merged quantity is the intended
+    # total. Unit prices: the 13b upload result (bom_2026-11-13/digikey_upload_result_2026-11-13b.csv).
+    # R2-BOM-5: the B suffix has no substitute (cr_bom.csv U102 note; sim/comparators/RESULTS.md section 5.6), and the
+    # main line orders exactly the 4 fitted parts ($2.78 > $1.00, no attrition).
+    ("296-TLV3012BIDBVRCT-ND", "TLV3012BIDBVR", "Texas Instruments",
+     "SPARE comparator + ref, push-pull, SOT-23-6 (B suffix required, no substitute)",
+     "SPARE U102,103,119,120 TLV3012B x2", "CR: spare for U102,U103,U119,U120", 2, 2.78, 2),
+    # R2-CRT-1 / BOM-7: the main line orders exactly 7 (MB 2 + EVM 5); design section E promises 2 (+2) and 5 (+3)
+    ("4713-GMC21X5R106K50NTCT-ND", "GMC21X5R106K50NT", "Cal-Chip Electronics, Inc.",
+     "SPARE 10 uF 50 V X5R 0805 (1.50 mm max thickness), the section E spares (+2 MB, +3 EVM)",
+     "SPARE C (MB) +2, C (EVM) +3", "SYS: spare for C (MB) x2, C (EVM) x5", 5, 1.76, 5),
+    # R2-BOM-0: one CR needs one TSW-110 and one TSW-112 (J1 pads 1-10 and 11-22, gen/netlist.py J1); the main lines
+    # order 3 x TSW-110 (attrition) and 1 x TSW-112, so the extra 1x10 strips have no 1x12 partner. One TSW-112 more
+    # makes a second matched J1 set.
+    ("612-TSW-112-07-L-S-ND", "TSW-112-07-L-S", "Samtec",
+     "SPARE TSW 1x12, 2.54 mm, -07, -L plating: second matched J1 set with a main-line TSW-110",
+     "SPARE CR J1 TSW-112 (2nd matched set)", "CR: J1 spare 1x12", 1, 1.10, 1),
+    # R2-BOM-0: one MB takes one SSQ-110 and one SSQ-112; the main lines order exactly one each
+    ("612-SSQ-110-01-G-S-ND", "SSQ-110-01-G-S", "Samtec Inc.",
+     "SPARE SSQ 1x10, 2.54 mm, -01, -G plating, through-hole; mates TSW-110-07-L-S",
+     "SPARE MB CHG socket 1x10", "SYS: spare MB CHG socket 1x10", 1, 2.56, 1),
+    ("612-SSQ-112-01-G-S-ND", "SSQ-112-01-G-S", "Samtec Inc.",
+     "SPARE SSQ 1x12, 2.54 mm, -01, -G plating, through-hole; mates TSW-112-07-L-S",
+     "SPARE MB CHG socket 1x12", "SYS: spare MB CHG socket 1x12", 1, 3.05, 1),
+]
+# the 10 nF line has no USD price read (digikey.co.uk 2026-11-15: GBP 0.10 at 1); it is ordered as a <= $0.25 part
+ALT_CHEAP = {"GRM1885C1H103JA01D"}
+with open(os.path.join(OUT, "digikey_optional.csv"), "w", encoding="utf-8", newline="") as f:
+    w = csv.writer(f, lineterminator="\r\n")
+    w.writerow(["Quantity", "Digi-Key Part Number", "Manufacturer Part Number", "Manufacturer", "Description",
+                "Customer Reference", "Reference Designators", "BOM Quantity", "Unit Price (qty 1, 2026-11-13)"])
+    for sku, mpn, mfr, desc, cref, refs, q, price, oq in ALTERNATES:
+        assert len(cref) <= CREF_MAX, cref
+        if oq is None:
+            oq = order_qty(q, 0.25 if mpn in ALT_CHEAP else price)
+        w.writerow([oq, sku, mpn, mfr, desc120(mpn, desc), cref, refs, q, "" if price is None else "%.2f" % price])
 
 # Mouser import (D-67): the rows whose vendor is Mouser, with the same Customer Part Number text, attrition rule and
 # extra columns as the Digi-Key file. Mouser's BOM tool maps the columns at upload.
@@ -580,14 +855,19 @@ with open(os.path.join(OUT, "mouser_import.csv"), "w", encoding="utf-8", newline
         cref = customer_ref(groups)
         assert cref, ("Mouser Customer Part Number too long", mpn)
         price = PRICE_Q1.get(mpn)
-        w.writerow([e["sku"], mpn, e["mfr"], e["desc"][:120], order_qty(e["qty"], price), cref, "; ".join(e["refs"]),
+        w.writerow([e["sku"], mpn, e["mfr"], desc120(mpn, e["desc"]), order_qty(e["qty"], price), cref, "; ".join(e["refs"]),
                     e["qty"], "" if price is None else "%.2f" % price])
 with open(os.path.join(OUT, "digikey_skipped.csv"), "w", encoding="utf-8", newline="") as f:
     w = csv.writer(f, lineterminator="\r\n")
     w.writerow(["BOM", "Part", "MPN", "Vendor"])
     w.writerows(skipped)
-print("cr rows %d (parts %d), eib rows %d (parts %d), system rows %d, digikey lines %d, mouser lines %d, "
-      "skipped %d" % (
+opt_total = 0.0
+for sku, mpn, mfr, desc, cref, refs, q, price, oq in ALTERNATES:
+    oq = oq if oq is not None else order_qty(q, 0.25 if mpn in ALT_CHEAP else price)
+    opt_total += oq * (price if price is not None else 0.0)
+print("optional lines at qty-1 prices: USD %.2f (lines without a USD price excluded)" % opt_total)
+print("cr rows %d (parts %d), eib rows %d (parts %d), system rows %d, digikey lines %d, optional lines %d, "
+      "mouser lines %d, skipped %d" % (
           len(cr), sum(int(r[C["BOM Qty"]]) for r in cr if r[C["Category"]] not in ("PCB", "Assembly")),
           len(eib), sum(int(r[C["BOM Qty"]]) for r in eib if r[C["Category"]] not in ("PCB", "Assembly")),
-          len(sysr), len(dk), len(mo), len(skipped)))
+          len(sysr), len(dk), len(ALTERNATES), len(mo), len(skipped)))

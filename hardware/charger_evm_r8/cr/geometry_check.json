@@ -1,11 +1,11 @@
 {
  "rows": [
   {
-   "rule": "H.23(a) successor: plug-on outline (D-39)",
-   "item": "Edge.Cuts",
+   "rule": "H.23(a) successor: D-39 placement frame (constant of gen/cr_geometry.py, history; the board outline is the D-62 row)",
+   "item": "D-39 constant P (not Edge.Cuts)",
    "measured": "4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00",
    "limit": "48.416 x 87.000 mm, 4212.19 mm2",
-   "result": "pass"
+   "result": "info"
   },
   {
    "rule": "H.23(a) successor: courtyard inset 0.5 mm (A.8)",
@@ -13,6 +13,48 @@
    "measured": "4077.78 mm2",
    "limit": "information",
    "result": "info"
+  },
+  {
+   "rule": "D-62 final outline (trimmed after routing, 1.0 mm fillets), inside the D-39 rectangle",
+   "item": "FINAL_OUTLINE",
+   "measured": "10 corners, filleted area 2327.7 mm2 (55 % of D-39), x 18.584-58.600, y 7.83-72.64, convex; edges off the angle set or short: none",
+   "limit": "inside the D-39 rectangle; -x edge at x 18.584 (D-51); edges at 0/30/45/60/90/120/135/150 deg, slanted >= 2.0 mm",
+   "result": "pass"
+  },
+  {
+   "rule": "D-60 +x key ear kept (D-41)",
+   "item": "KEY_EAR",
+   "measured": "box x 50.0-58.6, y 52.0-71.0; 0.027 mm2 cut by the corner fillets",
+   "limit": "inside the outline corners (before the D-62 fillets) within the 0.06 mm trim tolerance; the D-41 key row is the functional check",
+   "result": "pass"
+  },
+  {
+   "rule": "D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm)",
+   "item": "MH1",
+   "measured": "(26.23, 69.04); hole edge 1.75 mm from the board edge; head disc overhang 0.001 mm",
+   "limit": "head disc inside the final outline within the 0.06 mm trim tolerance",
+   "result": "pass"
+  },
+  {
+   "rule": "D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm)",
+   "item": "MH2",
+   "measured": "(54.85, 68.79); hole edge 1.90 mm from the board edge; head disc overhang 0.000 mm",
+   "limit": "head disc inside the final outline within the 0.06 mm trim tolerance",
+   "result": "pass"
+  },
+  {
+   "rule": "D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm)",
+   "item": "MH3",
+   "measured": "(54.85, 11.43); hole edge 1.75 mm from the board edge; head disc overhang 0.000 mm",
+   "limit": "head disc inside the final outline within the 0.06 mm trim tolerance",
+   "result": "pass"
+  },
+  {
+   "rule": "D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm)",
+   "item": "MH4",
+   "measured": "(24.48, 25.18); hole edge 1.75 mm from the board edge; head disc overhang 0.001 mm",
+   "limit": "head disc inside the final outline within the 0.06 mm trim tolerance",
+   "result": "pass"
   },
   {
    "rule": "D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan",
@@ -37,9 +79,9 @@
   },
   {
    "rule": "D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals",
-   "item": "J-BL, J-FC, J-BT",
-   "measured": "rotated outline x -0.004-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm",
-   "limit": "all three hit; engagement start < 21.70 mm",
+   "item": "J-BL, J-FC",
+   "measured": "rotated outline x 8.396-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm",
+   "limit": "J-BL and J-FC hit (D-41 as amended by D-60; J-BT not needed); engagement start < 21.70 mm",
    "result": "pass"
   },
   {
@@ -66,7 +108,7 @@
   {
    "rule": "H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03)",
    "item": "TSW-110 (pins 1-10)",
-   "measured": "margin 18.982 mm",
+   "measured": "margin 8.676 mm",
    "limit": ">= 0",
    "result": "pass"
   },
@@ -163,15 +205,15 @@
   },
   {
    "rule": "H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51)",
-   "item": "C-D4, C-DC3, C1-BT, C1-FC, CBL2, CHG, MDAC-BT, OP-BT, RB2, RB3",
-   "measured": "10 parts",
+   "item": "C-D3, CBL2, CHG, L-BT, MDAC-FC, OP-FC, RB2, RB3, REG-5V, ROP2-BT, SNS-BT",
+   "measured": "11 parts",
    "limit": "information",
    "result": "info"
   },
   {
    "rule": "H.23(e) successor: top-side courtyard booking, 78 parts, 0.25 mm basis (D-44, D-52)",
-   "item": "largest: J102 182.2, J1 99.5, J101 70.1, U101 27.6, D107 24.5 mm2",
-   "measured": "917.0 of 4077.8 mm2 = 22.5 %",
+   "item": "largest: J102 182.2, J1 99.5, J101 54.5, U101 27.6, D107 24.5 mm2",
+   "measured": "901.4 of 4077.8 mm2 = 22.1 %",
    "limit": "<= 75 % (A.8 booking target)",
    "result": "pass"
   }

@@ -266,6 +266,50 @@ def _strip_silk(fp):
         pass
 
 
+def _pin1_dot(fp, xy):
+    """REVIEW_2026-11-14 EIL-2 / CRL-3: a filled F.SilkS pin-1 dot (radius 0.10 mm, stroke 0.15 mm, outer diameter
+    0.35 mm) diagonally off the outer corner of pad 1 of an IC or transistor, outside the pad rows (an exception to
+    D-12, which kept these parts free of silkscreen). The position is checked on the EIB at >= 0.156 mm from every
+    mask opening (gen/eib_pin1_marks.py)."""
+    from kiutils.items.fpitems import FpCircle
+    from kiutils.items.common import Position
+    if xy is None:
+        return
+    x, y = xy
+    # kiutils writes the legacy (width ...) token, so the stroke goes in width, not in a Stroke object
+    fp.graphicItems.append(FpCircle(center=Position(X=x, Y=y), end=Position(X=round(x + 0.1, 4), Y=y),
+                                    layer="F.SilkS", width=0.15, fill="solid"))
+
+
+# pin-1 dot positions in footprint coordinates (pad 1 at the -x, -y corner of each stock footprint)
+PIN1_DOT = {"SOT-23": (-1.9, -1.5), "SOT-23-6": (-2.0, -1.5), "SC70-5": (-1.75, -1.15), "SSOP-8": (-2.75, -1.45)}
+# CR overrides (REVIEW_2026-11-14 CRL-3, gen/cr_pin1_marks.py): on the CR the shared SOT-23-6 position put the dot over
+# the drill of a tented /GND stitching via at U102, U107 and U119, and the shared SSOP-8 position came within 0.018 mm of
+# a via drill at U110. These positions keep >= 0.07 mm from every mask opening and >= 0.09 mm from every via drill on
+# every CR instance. VQFN24 (U101 only) has its dot off the pin-1 / pin-24 corner.
+PIN1_DOT_CR = {"SOT-23-6": (-1.55, -1.55), "SSOP-8": (-2.75, -1.35), "VQFN24": (-2.4, -2.4)}
+# CR cathode bars (REVIEW_2026-11-14 CRL-3): a 0.15 mm F.SilkS line beyond the toe of pad 1 (the cathode, K) of the SMA
+# diodes D103 and D107, 0.07 mm outside the pad mask opening; (start, end) in footprint coordinates.
+CATHODE_BAR_CR = {"SMA": ((-3.45, -0.9), (-3.45, 0.9))}
+
+
+def _pin1(key):
+    """Pin-1 dot position of package <key> on the board being built (CR overrides first)."""
+    if BOARD == "cr" and key in PIN1_DOT_CR:
+        return PIN1_DOT_CR[key]
+    return PIN1_DOT.get(key)
+
+
+def _cathode_bar(fp, key):
+    """REVIEW_2026-11-14 CRL-3: cathode bar on F.SilkS for a polarized two-terminal part (CR only)."""
+    from kiutils.items.fpitems import FpLine
+    from kiutils.items.common import Position
+    if BOARD != "cr" or key not in CATHODE_BAR_CR:
+        return
+    (x0, y0), (x1, y1) = CATHODE_BAR_CR[key]
+    fp.graphicItems.append(FpLine(start=Position(X=x0, Y=y0), end=Position(X=x1, Y=y1), layer="F.SilkS", width=0.15))
+
+
 def _set_courtyard(fp, x0, y0, x1, y1):
     from kiutils.items.fpitems import FpRect
     from kiutils.items.common import Position, Stroke
@@ -359,6 +403,7 @@ def vqfn24(outdir, name):
     c = round(max(-x0, -y0, x1, y1) + CRT, 3)   # 0.25 mm on the CR from 2026-11-12 (D-03 amended, D-52)
     _set_courtyard(fp, -c, -c, c, c)
     _strip_silk(fp)
+    _pin1_dot(fp, _pin1("VQFN24"))   # REVIEW_2026-11-14 CRL-3
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
@@ -375,16 +420,21 @@ def ssop_ti(outdir, name):
     x0, y0, x1, y1 = _extent(fp)
     _set_courtyard(fp, round(x0 - CRT, 3), round(y0 - CRT, 3), round(x1 + CRT, 3), round(y1 + CRT, 3))
     _strip_silk(fp)
+    _pin1_dot(fp, _pin1("SSOP-8"))
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
-def tight(outdir, name, lib, stock):
+def tight(outdir, name, lib, stock, pin1=None, bar=None):
     """Stock footprint with the courtyard redrawn at 0.10 mm beyond the union of the pads and the F.Fab body
-    (IPC-7351 least-density courtyard excess; D-03). Pads, silk, fab and 3D model unchanged."""
+    (IPC-7351 least-density courtyard excess; D-03). Pads, silk, fab and 3D model unchanged. pin1: optional pin-1
+    dot position (REVIEW_2026-11-14 EIL-2 / CRL-3)."""
     fp = _load(lib, stock, name)
     x0, y0, x1, y1 = _extent(fp)
     _set_courtyard(fp, round(x0 - CRT, 3), round(y0 - CRT, 3), round(x1 + CRT, 3), round(y1 + CRT, 3))
     _strip_silk(fp)
+    _pin1_dot(fp, pin1)
+    if bar:
+        _cathode_bar(fp, bar)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
@@ -450,11 +500,11 @@ CUSTOM = {
     "C0805": lambda o, n: tight(o, n, "Capacitor_SMD", "C_0805_2012Metric"),
     "C1206": lambda o, n: tight(o, n, "Capacitor_SMD", "C_1206_3216Metric"),
     "C1210": lambda o, n: tight(o, n, "Capacitor_SMD", "C_1210_3225Metric"),
-    "SMA": lambda o, n: tight(o, n, "Diode_SMD", "D_SMA"),
+    "SMA": lambda o, n: tight(o, n, "Diode_SMD", "D_SMA", bar="SMA"),
     "SOD-323": lambda o, n: tight(o, n, "Diode_SMD", "D_SOD-323"),
-    "SOT-23-6": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "SOT-23-6"),
-    "SOT-23": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "SOT-23"),
-    "SC70-5": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "Texas_R-PDSO-G5_DCK-5"),
+    "SOT-23-6": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "SOT-23-6", _pin1("SOT-23-6")),
+    "SOT-23": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "SOT-23", _pin1("SOT-23")),
+    "SC70-5": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "Texas_R-PDSO-G5_DCK-5", _pin1("SC70-5")),
     "SC70-6": lambda o, n: tight(o, n, "Package_TO_SOT_SMD", "SOT-363_SC-70-6"),
     "SSOP-8": ssop_ti,
 

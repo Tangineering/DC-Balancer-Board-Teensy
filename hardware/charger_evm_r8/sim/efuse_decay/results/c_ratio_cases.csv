@@ -1,0 +1,757 @@
+scenario,V_bus_P0gate_V,V_bus_P2end_V,switch,node_set,dV_bus_V,dV_rgn_V,ratio
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.8991,7.5483,0.7625
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.8991,7.3267,0.7401
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.8991,7.6269,0.7705
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"as-built, gain fit R 13k",9.8991,7.5340,0.7611
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"as-built, gain fit R 17k",9.8991,7.5268,0.7604
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.8991,7.5769,0.7654
+"V_fc 0, V_batt 7.4",5.900,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.8991,9.9000,1.0001
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.9991,7.5983,0.7599
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.9991,7.3767,0.7377
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.9991,7.6769,0.7678
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"as-built, gain fit R 13k",9.9991,7.5912,0.7592
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"as-built, gain fit R 17k",9.9991,7.5912,0.7592
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,7.6055,0.7606
+"V_fc 0, V_batt 7.4",5.900,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.9991,10.0000,1.0001
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",10.0991,7.6483,0.7573
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",10.0991,7.4268,0.7354
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",10.0991,7.7270,0.7651
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"as-built, gain fit R 13k",10.0991,7.6555,0.7580
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"as-built, gain fit R 17k",10.0991,7.6555,0.7580
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",10.0991,7.6340,0.7559
+"V_fc 0, V_batt 7.4",5.900,16.00,shorted,"repaired, healthy TL431 REF 4 uA",10.0991,10.1001,1.0001
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.7491,7.3982,0.7589
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.7491,7.1766,0.7361
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.7491,7.4768,0.7669
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"as-built, gain fit R 13k",9.7491,7.3839,0.7574
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"as-built, gain fit R 17k",9.7491,7.3767,0.7567
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.7491,7.4268,0.7618
+"V_fc 0, V_batt 7.4",6.050,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.7491,9.7499,1.0001
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.8491,7.4482,0.7562
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.8491,7.2266,0.7337
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.8491,7.5268,0.7642
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"as-built, gain fit R 13k",9.8491,7.4411,0.7555
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"as-built, gain fit R 17k",9.8491,7.4411,0.7555
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.8491,7.4553,0.7570
+"V_fc 0, V_batt 7.4",6.050,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.8491,9.8499,1.0001
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.9491,7.4982,0.7537
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.9491,7.2766,0.7314
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.9491,7.5769,0.7616
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"as-built, gain fit R 13k",9.9491,7.5054,0.7544
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"as-built, gain fit R 17k",9.9491,7.5054,0.7544
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9491,7.4839,0.7522
+"V_fc 0, V_batt 7.4",6.050,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.9491,9.9500,1.0001
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.5992,7.2481,0.7551
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.5992,7.0265,0.7320
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.5992,7.3267,0.7633
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"as-built, gain fit R 13k",9.5992,7.2338,0.7536
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"as-built, gain fit R 17k",9.5992,7.2266,0.7528
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.5992,7.2766,0.7581
+"V_fc 0, V_batt 7.4",6.200,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.5992,9.5997,1.0001
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.6991,7.2981,0.7524
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.6991,7.0765,0.7296
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.6991,7.3767,0.7606
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"as-built, gain fit R 13k",9.6991,7.2909,0.7517
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"as-built, gain fit R 17k",9.6991,7.2909,0.7517
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.6991,7.3052,0.7532
+"V_fc 0, V_batt 7.4",6.200,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.6991,9.6998,1.0001
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.7991,7.3481,0.7499
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.7991,7.1265,0.7273
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.7991,7.4268,0.7579
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"as-built, gain fit R 13k",9.7991,7.3553,0.7506
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"as-built, gain fit R 17k",9.7991,7.3553,0.7506
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.7991,7.3338,0.7484
+"V_fc 0, V_batt 7.4",6.200,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.7991,9.7999,1.0001
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.4492,7.0979,0.7512
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.4492,6.8764,0.7277
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.4492,7.1766,0.7595
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"as-built, gain fit R 13k",9.4492,7.0837,0.7497
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"as-built, gain fit R 17k",9.4492,7.0765,0.7489
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4492,7.1265,0.7542
+"V_fc 0, V_batt 7.4",6.350,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.4492,9.4496,1.0000
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.5492,7.1480,0.7485
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.5492,6.9264,0.7253
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.5492,7.2266,0.7568
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"as-built, gain fit R 13k",9.5492,7.1408,0.7478
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"as-built, gain fit R 17k",9.5492,7.1408,0.7478
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.5492,7.1551,0.7493
+"V_fc 0, V_batt 7.4",6.350,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.5492,9.5497,1.0001
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.6492,7.1980,0.7460
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.6492,6.9764,0.7230
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.6492,7.2766,0.7541
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"as-built, gain fit R 13k",9.6492,7.2052,0.7467
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"as-built, gain fit R 17k",9.6492,7.2052,0.7467
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.6492,7.1837,0.7445
+"V_fc 0, V_batt 7.4",6.350,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.6492,9.6498,1.0001
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.2992,6.9478,0.7471
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.2992,6.7263,0.7233
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.2992,7.0265,0.7556
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"as-built, gain fit R 13k",9.2992,6.9335,0.7456
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"as-built, gain fit R 17k",9.2992,6.9264,0.7448
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.2992,6.9764,0.7502
+"V_fc 0, V_batt 7.4",6.500,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.2992,9.2995,1.0000
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.3992,6.9979,0.7445
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.3992,6.7763,0.7209
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.3992,7.0765,0.7529
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"as-built, gain fit R 13k",9.3992,6.9907,0.7438
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"as-built, gain fit R 17k",9.3992,6.9907,0.7438
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.3992,7.0050,0.7453
+"V_fc 0, V_batt 7.4",6.500,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.3992,9.3996,1.0000
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.4992,7.0479,0.7420
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.4992,6.8263,0.7186
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.4992,7.1265,0.7502
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"as-built, gain fit R 13k",9.4992,7.0551,0.7427
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"as-built, gain fit R 17k",9.4992,7.0551,0.7427
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,7.0336,0.7404
+"V_fc 0, V_batt 7.4",6.500,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.4992,9.4997,1.0001
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.1492,6.7977,0.7430
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.1492,6.5761,0.7188
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.1492,6.8764,0.7516
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"as-built, gain fit R 13k",9.1492,6.7834,0.7414
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"as-built, gain fit R 17k",9.1492,6.7763,0.7406
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.1492,6.8263,0.7461
+"V_fc 0, V_batt 7.4",6.650,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.1492,9.1494,1.0000
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.2492,6.8478,0.7404
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.2492,6.6262,0.7164
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.2492,6.9264,0.7489
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"as-built, gain fit R 13k",9.2492,6.8406,0.7396
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"as-built, gain fit R 17k",9.2492,6.8406,0.7396
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.2492,6.8549,0.7411
+"V_fc 0, V_batt 7.4",6.650,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.2492,9.2495,1.0000
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.3492,6.8978,0.7378
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.3492,6.6762,0.7141
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.3492,6.9764,0.7462
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"as-built, gain fit R 13k",9.3492,6.9050,0.7386
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"as-built, gain fit R 17k",9.3492,6.9050,0.7386
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.3492,6.8835,0.7363
+"V_fc 0, V_batt 7.4",6.650,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.3492,9.3496,1.0000
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.9992,6.6476,0.7387
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.9992,6.4260,0.7141
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.9992,6.7263,0.7474
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"as-built, gain fit R 13k",8.9992,6.6333,0.7371
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"as-built, gain fit R 17k",8.9992,6.6262,0.7363
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,6.6762,0.7419
+"V_fc 0, V_batt 7.4",6.800,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.9992,8.9993,1.0000
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.0992,6.6977,0.7361
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.0992,6.4761,0.7117
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.0992,6.7763,0.7447
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"as-built, gain fit R 13k",9.0992,6.6905,0.7353
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"as-built, gain fit R 17k",9.0992,6.6905,0.7353
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.0992,6.7048,0.7369
+"V_fc 0, V_batt 7.4",6.800,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.0992,9.0994,1.0000
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.1992,6.7477,0.7335
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.1992,6.5261,0.7094
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.1992,6.8263,0.7421
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"as-built, gain fit R 13k",9.1992,6.7548,0.7343
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"as-built, gain fit R 17k",9.1992,6.7548,0.7343
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.1992,6.7334,0.7320
+"V_fc 0, V_batt 7.4",6.800,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.1992,9.1995,1.0000
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.8492,6.4975,0.7342
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.8492,6.2759,0.7092
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.8492,6.5761,0.7431
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"as-built, gain fit R 13k",8.8492,6.4832,0.7326
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"as-built, gain fit R 17k",8.8492,6.4761,0.7318
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.8492,6.5261,0.7375
+"V_fc 0, V_batt 7.4",6.950,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.8492,8.8492,1.0000
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.9492,6.5476,0.7316
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.9492,6.3260,0.7069
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.9492,6.6262,0.7404
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"as-built, gain fit R 13k",8.9492,6.5404,0.7308
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"as-built, gain fit R 17k",8.9492,6.5404,0.7308
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9492,6.5547,0.7324
+"V_fc 0, V_batt 7.4",6.950,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.9492,8.9493,1.0000
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.0492,6.5976,0.7291
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.0492,6.3760,0.7046
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.0492,6.6762,0.7378
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"as-built, gain fit R 13k",9.0492,6.6047,0.7299
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"as-built, gain fit R 17k",9.0492,6.6047,0.7299
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.0492,6.5833,0.7275
+"V_fc 0, V_batt 7.4",6.950,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.0492,9.0493,1.0000
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.6992,6.3474,0.7297
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.6992,6.1258,0.7042
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.6992,6.4260,0.7387
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"as-built, gain fit R 13k",8.6992,6.3331,0.7280
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"as-built, gain fit R 17k",8.6992,6.3260,0.7272
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.6992,6.3760,0.7329
+"V_fc 0, V_batt 7.4",7.100,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.6992,8.6991,1.0000
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.7992,6.3974,0.7270
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.7992,6.1759,0.7019
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.7992,6.4761,0.7360
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"as-built, gain fit R 13k",8.7992,6.3903,0.7262
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"as-built, gain fit R 17k",8.7992,6.3903,0.7262
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,6.4046,0.7279
+"V_fc 0, V_batt 7.4",7.100,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.7992,8.7992,1.0000
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.8992,6.4475,0.7245
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.8992,6.2259,0.6996
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.8992,6.5261,0.7333
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"as-built, gain fit R 13k",8.8992,6.4546,0.7253
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"as-built, gain fit R 17k",8.8992,6.4546,0.7253
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.8992,6.4332,0.7229
+"V_fc 0, V_batt 7.4",7.100,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.8992,8.8992,1.0000
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.3992,7.0479,0.7498
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.3992,6.8263,0.7263
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.3992,7.1265,0.7582
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"as-built, gain fit R 13k",9.3992,7.0336,0.7483
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"as-built, gain fit R 17k",9.3992,7.0265,0.7476
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.3992,7.0765,0.7529
+"V_fc 0, V_batt 7.9",6.400,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.3992,9.3996,1.0000
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.4992,7.0979,0.7472
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.4992,6.8764,0.7239
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.4992,7.1766,0.7555
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"as-built, gain fit R 13k",9.4992,7.0908,0.7465
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"as-built, gain fit R 17k",9.4992,7.0908,0.7465
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,7.1051,0.7480
+"V_fc 0, V_batt 7.9",6.400,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.4992,9.4997,1.0001
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.5992,7.1480,0.7446
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.5992,6.9264,0.7216
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.5992,7.2266,0.7528
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"as-built, gain fit R 13k",9.5992,7.1551,0.7454
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"as-built, gain fit R 17k",9.5992,7.1551,0.7454
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.5992,7.1337,0.7432
+"V_fc 0, V_batt 7.9",6.400,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.5992,9.5997,1.0001
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.2492,6.8978,0.7458
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.2492,6.6762,0.7218
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.2492,6.9764,0.7543
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"as-built, gain fit R 13k",9.2492,6.8835,0.7442
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"as-built, gain fit R 17k",9.2492,6.8764,0.7435
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.2492,6.9264,0.7489
+"V_fc 0, V_batt 7.9",6.550,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.2492,9.2495,1.0000
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.3492,6.9478,0.7432
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.3492,6.7263,0.7194
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.3492,7.0265,0.7516
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"as-built, gain fit R 13k",9.3492,6.9407,0.7424
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"as-built, gain fit R 17k",9.3492,6.9407,0.7424
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.3492,6.9550,0.7439
+"V_fc 0, V_batt 7.9",6.550,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.3492,9.3496,1.0000
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.4492,6.9979,0.7406
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.4492,6.7763,0.7171
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.4492,7.0765,0.7489
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"as-built, gain fit R 13k",9.4492,7.0050,0.7413
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"as-built, gain fit R 17k",9.4492,7.0050,0.7413
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4492,6.9836,0.7391
+"V_fc 0, V_batt 7.9",6.550,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.4492,9.4496,1.0000
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",9.0992,6.7477,0.7416
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.0992,6.5261,0.7172
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.0992,6.8263,0.7502
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"as-built, gain fit R 13k",9.0992,6.7334,0.7400
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"as-built, gain fit R 17k",9.0992,6.7263,0.7392
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.0992,6.7763,0.7447
+"V_fc 0, V_batt 7.9",6.700,15.80,shorted,"repaired, healthy TL431 REF 4 uA",9.0992,9.0994,1.0000
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.1992,6.7977,0.7389
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.1992,6.5761,0.7149
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.1992,6.8764,0.7475
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"as-built, gain fit R 13k",9.1992,6.7906,0.7382
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"as-built, gain fit R 17k",9.1992,6.7906,0.7382
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.1992,6.8049,0.7397
+"V_fc 0, V_batt 7.9",6.700,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.1992,9.1995,1.0000
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.2992,6.8478,0.7364
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.2992,6.6262,0.7126
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.2992,6.9264,0.7448
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"as-built, gain fit R 13k",9.2992,6.8549,0.7372
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"as-built, gain fit R 17k",9.2992,6.8549,0.7372
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.2992,6.8335,0.7348
+"V_fc 0, V_batt 7.9",6.700,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.2992,9.2995,1.0000
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.9492,6.5976,0.7372
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.9492,6.3760,0.7125
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.9492,6.6762,0.7460
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"as-built, gain fit R 13k",8.9492,6.5833,0.7356
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"as-built, gain fit R 17k",8.9492,6.5761,0.7348
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9492,6.6262,0.7404
+"V_fc 0, V_batt 7.9",6.850,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.9492,8.9493,1.0000
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",9.0492,6.6476,0.7346
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.0492,6.4260,0.7101
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.0492,6.7263,0.7433
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"as-built, gain fit R 13k",9.0492,6.6405,0.7338
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"as-built, gain fit R 17k",9.0492,6.6405,0.7338
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.0492,6.6548,0.7354
+"V_fc 0, V_batt 7.9",6.850,15.90,shorted,"repaired, healthy TL431 REF 4 uA",9.0492,9.0493,1.0000
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.1492,6.6977,0.7320
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.1492,6.4761,0.7078
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.1492,6.7763,0.7406
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"as-built, gain fit R 13k",9.1492,6.7048,0.7328
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"as-built, gain fit R 17k",9.1492,6.7048,0.7328
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.1492,6.6834,0.7305
+"V_fc 0, V_batt 7.9",6.850,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.1492,9.1494,1.0000
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.7992,6.4475,0.7327
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.7992,6.2259,0.7076
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.7992,6.5261,0.7417
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"as-built, gain fit R 13k",8.7992,6.4332,0.7311
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"as-built, gain fit R 17k",8.7992,6.4260,0.7303
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,6.4761,0.7360
+"V_fc 0, V_batt 7.9",7.000,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.7992,8.7992,1.0000
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.8992,6.4975,0.7301
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.8992,6.2759,0.7052
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.8992,6.5761,0.7390
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"as-built, gain fit R 13k",8.8992,6.4904,0.7293
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"as-built, gain fit R 17k",8.8992,6.4904,0.7293
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.8992,6.5047,0.7309
+"V_fc 0, V_batt 7.9",7.000,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.8992,8.8992,1.0000
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.9992,6.5476,0.7276
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.9992,6.3260,0.7029
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.9992,6.6262,0.7363
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"as-built, gain fit R 13k",8.9992,6.5547,0.7284
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"as-built, gain fit R 17k",8.9992,6.5547,0.7284
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,6.5333,0.7260
+"V_fc 0, V_batt 7.9",7.000,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.9992,8.9993,1.0000
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.6492,6.2974,0.7281
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.6492,6.0758,0.7025
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.6492,6.3760,0.7372
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"as-built, gain fit R 13k",8.6492,6.2831,0.7264
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"as-built, gain fit R 17k",8.6492,6.2759,0.7256
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.6492,6.3260,0.7314
+"V_fc 0, V_batt 7.9",7.150,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.6492,8.6491,1.0000
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.7492,6.3474,0.7255
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.7492,6.1258,0.7002
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.7492,6.4260,0.7345
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"as-built, gain fit R 13k",8.7492,6.3403,0.7247
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"as-built, gain fit R 17k",8.7492,6.3403,0.7247
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7492,6.3546,0.7263
+"V_fc 0, V_batt 7.9",7.150,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.7492,8.7491,1.0000
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.8492,6.3974,0.7229
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.8492,6.1759,0.6979
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.8492,6.4761,0.7318
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"as-built, gain fit R 13k",8.8492,6.4046,0.7237
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"as-built, gain fit R 17k",8.8492,6.4046,0.7237
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.8492,6.3832,0.7213
+"V_fc 0, V_batt 7.9",7.150,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.8492,8.8492,1.0000
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.4993,6.1473,0.7233
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.4993,5.9257,0.6972
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.4993,6.2259,0.7325
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"as-built, gain fit R 13k",8.4993,6.1330,0.7216
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"as-built, gain fit R 17k",8.4993,6.1258,0.7207
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.4993,6.1759,0.7266
+"V_fc 0, V_batt 7.9",7.300,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.4993,8.4990,1.0000
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.5992,6.1973,0.7207
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.5992,5.9757,0.6949
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.5992,6.2759,0.7298
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"as-built, gain fit R 13k",8.5992,6.1902,0.7198
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"as-built, gain fit R 17k",8.5992,6.1902,0.7198
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.5992,6.2045,0.7215
+"V_fc 0, V_batt 7.9",7.300,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.5992,8.5990,1.0000
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.6992,6.2473,0.7181
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.6992,6.0258,0.6927
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.6992,6.3260,0.7272
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"as-built, gain fit R 13k",8.6992,6.2545,0.7190
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"as-built, gain fit R 17k",8.6992,6.2545,0.7190
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.6992,6.2330,0.7165
+"V_fc 0, V_batt 7.9",7.300,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.6992,8.6991,1.0000
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.3493,5.9972,0.7183
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.3493,5.7756,0.6917
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.3493,6.0758,0.7277
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"as-built, gain fit R 13k",8.3493,5.9829,0.7166
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"as-built, gain fit R 17k",8.3493,5.9757,0.7157
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.3493,6.0258,0.7217
+"V_fc 0, V_batt 7.9",7.450,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.3493,8.3488,0.9999
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.4493,6.0472,0.7157
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.4493,5.8256,0.6895
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.4493,6.1258,0.7250
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"as-built, gain fit R 13k",8.4493,6.0400,0.7149
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"as-built, gain fit R 17k",8.4493,6.0400,0.7149
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.4493,6.0543,0.7166
+"V_fc 0, V_batt 7.9",7.450,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.4493,8.4489,1.0000
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.5492,6.0972,0.7132
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.5492,5.8756,0.6873
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.5492,6.1759,0.7224
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"as-built, gain fit R 13k",8.5492,6.1044,0.7140
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"as-built, gain fit R 17k",8.5492,6.1044,0.7140
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.5492,6.0829,0.7115
+"V_fc 0, V_batt 7.9",7.450,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.5492,8.5490,1.0000
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.1993,5.8471,0.7131
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.1993,5.6255,0.6861
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.1993,5.9257,0.7227
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"as-built, gain fit R 13k",8.1993,5.8328,0.7114
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"as-built, gain fit R 17k",8.1993,5.8256,0.7105
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.1993,5.8756,0.7166
+"V_fc 0, V_batt 7.9",7.600,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.1993,8.1987,0.9999
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.2993,5.8971,0.7106
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.2993,5.6755,0.6839
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.2993,5.9757,0.7200
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"as-built, gain fit R 13k",8.2993,5.8899,0.7097
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"as-built, gain fit R 17k",8.2993,5.8899,0.7097
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,5.9042,0.7114
+"V_fc 0, V_batt 7.9",7.600,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.2993,8.2988,0.9999
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.3993,5.9471,0.7081
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.3993,5.7255,0.6817
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.3993,6.0258,0.7174
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"as-built, gain fit R 13k",8.3993,5.9543,0.7089
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"as-built, gain fit R 17k",8.3993,5.9543,0.7089
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.3993,5.9328,0.7064
+"V_fc 0, V_batt 7.9",7.600,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.3993,8.3989,1.0000
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.8992,6.5476,0.7357
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.8992,6.3260,0.7108
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.8992,6.6262,0.7446
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"as-built, gain fit R 13k",8.8992,6.5333,0.7341
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"as-built, gain fit R 17k",8.8992,6.5261,0.7333
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.8992,6.5761,0.7390
+"V_fc 0, V_batt 8.4",6.900,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.8992,8.8992,1.0000
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.9992,6.5976,0.7331
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.9992,6.3760,0.7085
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.9992,6.6762,0.7419
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"as-built, gain fit R 13k",8.9992,6.5904,0.7323
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"as-built, gain fit R 17k",8.9992,6.5904,0.7323
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,6.6047,0.7339
+"V_fc 0, V_batt 8.4",6.900,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.9992,8.9993,1.0000
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",9.0992,6.6476,0.7306
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",9.0992,6.4260,0.7062
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",9.0992,6.7263,0.7392
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"as-built, gain fit R 13k",9.0992,6.6548,0.7314
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"as-built, gain fit R 17k",9.0992,6.6548,0.7314
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.0992,6.6333,0.7290
+"V_fc 0, V_batt 8.4",6.900,16.00,shorted,"repaired, healthy TL431 REF 4 uA",9.0992,9.0994,1.0000
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.7492,6.3974,0.7312
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.7492,6.1759,0.7059
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.7492,6.4761,0.7402
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"as-built, gain fit R 13k",8.7492,6.3832,0.7296
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"as-built, gain fit R 17k",8.7492,6.3760,0.7288
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7492,6.4260,0.7345
+"V_fc 0, V_batt 8.4",7.050,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.7492,8.7491,1.0000
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.8492,6.4475,0.7286
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.8492,6.2259,0.7036
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.8492,6.5261,0.7375
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"as-built, gain fit R 13k",8.8492,6.4403,0.7278
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"as-built, gain fit R 17k",8.8492,6.4403,0.7278
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.8492,6.4546,0.7294
+"V_fc 0, V_batt 8.4",7.050,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.8492,8.8492,1.0000
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.9492,6.4975,0.7260
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.9492,6.2759,0.7013
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.9492,6.5761,0.7348
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"as-built, gain fit R 13k",8.9492,6.5047,0.7268
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"as-built, gain fit R 17k",8.9492,6.5047,0.7268
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9492,6.4832,0.7244
+"V_fc 0, V_batt 8.4",7.050,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.9492,8.9493,1.0000
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.5992,6.2473,0.7265
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.5992,6.0258,0.7007
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.5992,6.3260,0.7356
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"as-built, gain fit R 13k",8.5992,6.2330,0.7248
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"as-built, gain fit R 17k",8.5992,6.2259,0.7240
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.5992,6.2759,0.7298
+"V_fc 0, V_batt 8.4",7.200,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.5992,8.5990,1.0000
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.6992,6.2974,0.7239
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.6992,6.0758,0.6984
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.6992,6.3760,0.7329
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"as-built, gain fit R 13k",8.6992,6.2902,0.7231
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"as-built, gain fit R 17k",8.6992,6.2902,0.7231
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.6992,6.3045,0.7247
+"V_fc 0, V_batt 8.4",7.200,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.6992,8.6991,1.0000
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.7992,6.3474,0.7214
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.7992,6.1258,0.6962
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.7992,6.4260,0.7303
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"as-built, gain fit R 13k",8.7992,6.3546,0.7222
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"as-built, gain fit R 17k",8.7992,6.3546,0.7222
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,6.3331,0.7197
+"V_fc 0, V_batt 8.4",7.200,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.7992,8.7992,1.0000
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.4493,6.0972,0.7216
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.4493,5.8756,0.6954
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.4493,6.1759,0.7309
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"as-built, gain fit R 13k",8.4493,6.0829,0.7199
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"as-built, gain fit R 17k",8.4493,6.0758,0.7191
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.4493,6.1258,0.7250
+"V_fc 0, V_batt 8.4",7.350,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.4493,8.4489,1.0000
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.5492,6.1473,0.7190
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.5492,5.9257,0.6931
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.5492,6.2259,0.7282
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"as-built, gain fit R 13k",8.5492,6.1401,0.7182
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"as-built, gain fit R 17k",8.5492,6.1401,0.7182
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.5492,6.1544,0.7199
+"V_fc 0, V_batt 8.4",7.350,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.5492,8.5490,1.0000
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.6492,6.1973,0.7165
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.6492,5.9757,0.6909
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.6492,6.2759,0.7256
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"as-built, gain fit R 13k",8.6492,6.2045,0.7173
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"as-built, gain fit R 17k",8.6492,6.2045,0.7173
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.6492,6.1830,0.7149
+"V_fc 0, V_batt 8.4",7.350,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.6492,8.6491,1.0000
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.2993,5.9471,0.7166
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.2993,5.7255,0.6899
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.2993,6.0258,0.7261
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"as-built, gain fit R 13k",8.2993,5.9328,0.7149
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"as-built, gain fit R 17k",8.2993,5.9257,0.7140
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,5.9757,0.7200
+"V_fc 0, V_batt 8.4",7.500,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.2993,8.2988,0.9999
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.3993,5.9972,0.7140
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.3993,5.7756,0.6876
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.3993,6.0758,0.7234
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"as-built, gain fit R 13k",8.3993,5.9900,0.7132
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"as-built, gain fit R 17k",8.3993,5.9900,0.7132
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.3993,6.0043,0.7149
+"V_fc 0, V_batt 8.4",7.500,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.3993,8.3989,1.0000
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.4993,6.0472,0.7115
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.4993,5.8256,0.6854
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.4993,6.1258,0.7207
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"as-built, gain fit R 13k",8.4993,6.0543,0.7123
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"as-built, gain fit R 17k",8.4993,6.0543,0.7123
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.4993,6.0329,0.7098
+"V_fc 0, V_batt 8.4",7.500,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.4993,8.4990,1.0000
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",8.1493,5.7970,0.7114
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.1493,5.5754,0.6842
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.1493,5.8756,0.7210
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"as-built, gain fit R 13k",8.1493,5.7827,0.7096
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"as-built, gain fit R 17k",8.1493,5.7756,0.7087
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.1493,5.8256,0.7149
+"V_fc 0, V_batt 8.4",7.650,15.80,shorted,"repaired, healthy TL431 REF 4 uA",8.1493,8.1487,0.9999
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.2493,5.8471,0.7088
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.2493,5.6255,0.6819
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.2493,5.9257,0.7183
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"as-built, gain fit R 13k",8.2493,5.8399,0.7079
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"as-built, gain fit R 17k",8.2493,5.8399,0.7079
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2493,5.8542,0.7097
+"V_fc 0, V_batt 8.4",7.650,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.2493,8.2488,0.9999
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.3493,5.8971,0.7063
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.3493,5.6755,0.6798
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.3493,5.9757,0.7157
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"as-built, gain fit R 13k",8.3493,5.9042,0.7072
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"as-built, gain fit R 17k",8.3493,5.9042,0.7072
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.3493,5.8828,0.7046
+"V_fc 0, V_batt 8.4",7.650,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.3493,8.3488,0.9999
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",7.9993,5.6469,0.7059
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",7.9993,5.4253,0.6782
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",7.9993,5.7255,0.7158
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"as-built, gain fit R 13k",7.9993,5.6326,0.7041
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"as-built, gain fit R 17k",7.9993,5.6255,0.7032
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.9993,5.6755,0.7095
+"V_fc 0, V_batt 8.4",7.800,15.80,shorted,"repaired, healthy TL431 REF 4 uA",7.9993,7.9986,0.9999
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",8.0993,5.6969,0.7034
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.0993,5.4754,0.6760
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.0993,5.7756,0.7131
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"as-built, gain fit R 13k",8.0993,5.6898,0.7025
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"as-built, gain fit R 17k",8.0993,5.6898,0.7025
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.0993,5.7041,0.7043
+"V_fc 0, V_batt 8.4",7.800,15.90,shorted,"repaired, healthy TL431 REF 4 uA",8.0993,8.0987,0.9999
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.1993,5.7470,0.7009
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.1993,5.5254,0.6739
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.1993,5.8256,0.7105
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"as-built, gain fit R 13k",8.1993,5.7541,0.7018
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"as-built, gain fit R 17k",8.1993,5.7541,0.7018
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.1993,5.7327,0.6992
+"V_fc 0, V_batt 8.4",7.800,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.1993,8.1987,0.9999
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",7.8493,5.4968,0.7003
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",7.8493,5.2752,0.6721
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",7.8493,5.5754,0.7103
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"as-built, gain fit R 13k",7.8493,5.4825,0.6985
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"as-built, gain fit R 17k",7.8493,5.4754,0.6976
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.8493,5.5254,0.7039
+"V_fc 0, V_batt 8.4",7.950,15.80,shorted,"repaired, healthy TL431 REF 4 uA",7.8493,7.8485,0.9999
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",7.9493,5.5468,0.6978
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",7.9493,5.3252,0.6699
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",7.9493,5.6255,0.7077
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"as-built, gain fit R 13k",7.9493,5.5397,0.6969
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"as-built, gain fit R 17k",7.9493,5.5397,0.6969
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.9493,5.5540,0.6987
+"V_fc 0, V_batt 8.4",7.950,15.90,shorted,"repaired, healthy TL431 REF 4 uA",7.9493,7.9486,0.9999
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",8.0493,5.5969,0.6953
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",8.0493,5.3753,0.6678
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",8.0493,5.6755,0.7051
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"as-built, gain fit R 13k",8.0493,5.6040,0.6962
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"as-built, gain fit R 17k",8.0493,5.6040,0.6962
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.0493,5.5826,0.6935
+"V_fc 0, V_batt 8.4",7.950,16.00,shorted,"repaired, healthy TL431 REF 4 uA",8.0493,8.0486,0.9999
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",7.6993,5.3467,0.6944
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",7.6993,5.1251,0.6657
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",7.6993,5.4253,0.7046
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"as-built, gain fit R 13k",7.6993,5.3324,0.6926
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"as-built, gain fit R 17k",7.6993,5.3252,0.6917
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.6993,5.3753,0.6982
+"V_fc 0, V_batt 8.4",8.100,15.80,shorted,"repaired, healthy TL431 REF 4 uA",7.6993,7.6984,0.9999
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",7.7993,5.3967,0.6919
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",7.7993,5.1751,0.6635
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",7.7993,5.4754,0.7020
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"as-built, gain fit R 13k",7.7993,5.3896,0.6910
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"as-built, gain fit R 17k",7.7993,5.3896,0.6910
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,5.4039,0.6929
+"V_fc 0, V_batt 8.4",8.100,15.90,shorted,"repaired, healthy TL431 REF 4 uA",7.7993,7.7985,0.9999
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",7.8993,5.4468,0.6895
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",7.8993,5.2252,0.6615
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",7.8993,5.5254,0.6995
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"as-built, gain fit R 13k",7.8993,5.4539,0.6904
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"as-built, gain fit R 17k",7.8993,5.4539,0.6904
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.8993,5.4325,0.6877
+"V_fc 0, V_batt 8.4",8.100,16.00,shorted,"repaired, healthy TL431 REF 4 uA",7.8993,7.8985,0.9999
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",4.9587,2.6019,0.5247
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.9587,2.5232,0.5089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.9587,2.6805,0.5406
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"as-built, gain fit R 13k",4.9587,2.9450,0.5939
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"as-built, gain fit R 17k",4.9587,3.2595,0.6573
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.9587,2.6305,0.5305
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.80,shorted,"repaired, healthy TL431 REF 4 uA",4.9587,4.9536,0.9990
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",5.0586,2.6519,0.5242
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",5.0586,2.5733,0.5087
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",5.0586,2.7305,0.5398
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"as-built, gain fit R 13k",5.0586,3.0022,0.5935
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"as-built, gain fit R 17k",5.0586,3.3238,0.6571
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,2.6591,0.5256
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,shorted,"repaired, healthy TL431 REF 4 uA",5.0586,5.0536,0.9990
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",5.1586,2.7019,0.5238
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",5.1586,2.6233,0.5085
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",5.1586,2.7806,0.5390
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"as-built, gain fit R 13k",5.1586,3.0665,0.5944
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"as-built, gain fit R 17k",5.1586,3.3881,0.6568
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.1586,2.6876,0.5210
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,16.00,shorted,"repaired, healthy TL431 REF 4 uA",5.1586,5.1537,0.9990
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",4.7223,2.3731,0.5025
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.7223,2.4017,0.5086
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.7223,2.4661,0.5222
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"as-built, gain fit R 13k",4.7223,2.8092,0.5949
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"as-built, gain fit R 17k",4.7223,3.1094,0.6584
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.7223,2.4017,0.5086
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.80,shorted,"repaired, healthy TL431 REF 4 uA",4.7223,4.7248,1.0005
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",4.8223,2.4232,0.5025
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.8223,2.4518,0.5084
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.8223,2.5161,0.5218
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"as-built, gain fit R 13k",4.8223,2.8663,0.5944
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"as-built, gain fit R 17k",4.8223,3.1737,0.6581
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.8223,2.4303,0.5040
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,15.90,shorted,"repaired, healthy TL431 REF 4 uA",4.8223,4.8249,1.0005
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",4.9223,2.4732,0.5024
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.9223,2.5018,0.5083
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.9223,2.5661,0.5213
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"as-built, gain fit R 13k",4.9223,2.9307,0.5954
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"as-built, gain fit R 17k",4.9223,3.2380,0.6578
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.9223,2.4589,0.4995
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.074,16.00,shorted,"repaired, healthy TL431 REF 4 uA",4.9223,4.9250,1.0005
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",4.4905,2.1658,0.4823
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.4905,2.2874,0.5094
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.4905,2.3231,0.5173
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"as-built, gain fit R 13k",4.4905,2.6733,0.5953
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"as-built, gain fit R 17k",4.4905,2.9521,0.6574
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.4905,2.1658,0.4823
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.80,shorted,"repaired, healthy TL431 REF 4 uA",4.4905,4.4889,0.9996
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",4.5905,2.2159,0.4827
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.5905,2.3374,0.5092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.5905,2.3731,0.5170
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"as-built, gain fit R 13k",4.5905,2.7305,0.5948
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"as-built, gain fit R 17k",4.5905,3.0164,0.6571
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.5905,2.1944,0.4780
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,15.90,shorted,"repaired, healthy TL431 REF 4 uA",4.5905,4.5890,0.9997
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",4.6905,2.2659,0.4831
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.6905,2.3874,0.5090
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.6905,2.4232,0.5166
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"as-built, gain fit R 13k",4.6905,2.7949,0.5959
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"as-built, gain fit R 17k",4.6905,3.0808,0.6568
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.6905,2.2230,0.4739
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.306,16.00,shorted,"repaired, healthy TL431 REF 4 uA",4.6905,4.6891,0.9997
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",4.2587,2.0443,0.4800
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.2587,2.1658,0.5086
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.2587,2.2016,0.5170
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"as-built, gain fit R 13k",4.2587,2.5304,0.5942
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"as-built, gain fit R 17k",4.2587,2.8020,0.6579
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.2587,1.9371,0.4549
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.80,shorted,"repaired, healthy TL431 REF 4 uA",4.2587,4.2602,1.0003
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",4.3587,2.0944,0.4805
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.3587,2.2159,0.5084
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.3587,2.2516,0.5166
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"as-built, gain fit R 13k",4.3587,2.5876,0.5937
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"as-built, gain fit R 17k",4.3587,2.8663,0.6576
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.3587,1.9657,0.4510
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,15.90,shorted,"repaired, healthy TL431 REF 4 uA",4.3587,4.3603,1.0004
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",4.4587,2.1444,0.4809
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.4587,2.2659,0.5082
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.4587,2.3017,0.5162
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"as-built, gain fit R 13k",4.4587,2.6519,0.5948
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"as-built, gain fit R 17k",4.4587,2.9307,0.6573
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.4587,1.9943,0.4473
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.539,16.00,shorted,"repaired, healthy TL431 REF 4 uA",4.4587,4.4603,1.0004
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",4.0269,1.9300,0.4793
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.0269,2.0515,0.5094
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.0269,2.0801,0.5165
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"as-built, gain fit R 13k",4.0269,2.3946,0.5946
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"as-built, gain fit R 17k",4.0269,2.6448,0.6568
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.0269,1.7012,0.4225
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.80,shorted,"repaired, healthy TL431 REF 4 uA",4.0269,4.0243,0.9994
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",4.1269,1.9800,0.4798
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.1269,2.1015,0.5092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.1269,2.1301,0.5161
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"as-built, gain fit R 13k",4.1269,2.4518,0.5941
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"as-built, gain fit R 17k",4.1269,2.7091,0.6564
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.1269,1.7298,0.4192
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,15.90,shorted,"repaired, healthy TL431 REF 4 uA",4.1269,4.1244,0.9994
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",4.2269,2.0300,0.4803
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",4.2269,2.1515,0.5090
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",4.2269,2.1801,0.5158
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"as-built, gain fit R 13k",4.2269,2.5161,0.5953
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"as-built, gain fit R 17k",4.2269,2.7734,0.6561
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",4.2269,1.7584,0.4160
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",11.771,16.00,shorted,"repaired, healthy TL431 REF 4 uA",4.2269,4.2245,0.9994
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",3.7951,1.8227,0.4803
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.7951,1.9300,0.5085
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.7951,1.9657,0.5180
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"as-built, gain fit R 13k",3.7951,2.2588,0.5952
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"as-built, gain fit R 17k",3.7951,2.4946,0.6573
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.7951,1.4725,0.3880
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.80,shorted,"repaired, healthy TL431 REF 4 uA",3.7951,3.7956,1.0001
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",3.8951,1.8728,0.4808
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.8951,1.9800,0.5083
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.8951,2.0157,0.5175
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"as-built, gain fit R 13k",3.8951,2.3159,0.5946
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"as-built, gain fit R 17k",3.8951,2.5590,0.6570
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.8951,1.5011,0.3854
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,15.90,shorted,"repaired, healthy TL431 REF 4 uA",3.8951,3.8957,1.0001
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",3.9951,1.9228,0.4813
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.9951,2.0300,0.5081
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.9951,2.0658,0.5171
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"as-built, gain fit R 13k",3.9951,2.3803,0.5958
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"as-built, gain fit R 17k",3.9951,2.6233,0.6566
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.9951,1.5297,0.3829
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.003,16.00,shorted,"repaired, healthy TL431 REF 4 uA",3.9951,3.9957,1.0002
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",3.5633,1.7084,0.4794
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.5633,1.8156,0.5095
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.5633,1.8442,0.5175
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"as-built, gain fit R 13k",3.5633,2.1158,0.5938
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"as-built, gain fit R 17k",3.5633,2.3445,0.6580
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.5633,1.2366,0.3470
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.80,shorted,"repaired, healthy TL431 REF 4 uA",3.5633,3.5597,0.9990
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",3.6633,1.7584,0.4800
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.6633,1.8656,0.5093
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.6633,1.8942,0.5171
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"as-built, gain fit R 13k",3.6633,2.1730,0.5932
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"as-built, gain fit R 17k",3.6633,2.4089,0.6576
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.6633,1.2652,0.3454
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,15.90,shorted,"repaired, healthy TL431 REF 4 uA",3.6633,3.6598,0.9990
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",3.7633,1.8084,0.4805
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.7633,1.9157,0.5090
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.7633,1.9443,0.5166
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"as-built, gain fit R 13k",3.7633,2.2373,0.5945
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"as-built, gain fit R 17k",3.7633,2.4732,0.6572
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.7633,1.2938,0.3438
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.235,16.00,shorted,"repaired, healthy TL431 REF 4 uA",3.7633,3.7598,0.9991
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",3.3315,1.6011,0.4806
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.3315,1.6941,0.5085
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.3315,1.7227,0.5171
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"as-built, gain fit R 13k",3.3315,1.9800,0.5943
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"as-built, gain fit R 17k",3.3315,2.1873,0.6565
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.3315,1.0150,0.3047
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.80,shorted,"repaired, healthy TL431 REF 4 uA",3.3315,3.3310,0.9998
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",3.4315,1.6512,0.4812
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.4315,1.7441,0.5083
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.4315,1.7727,0.5166
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"as-built, gain fit R 13k",3.4315,2.0372,0.5937
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"as-built, gain fit R 17k",3.4315,2.2516,0.6562
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.4315,1.0436,0.3041
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,15.90,shorted,"repaired, healthy TL431 REF 4 uA",3.4315,3.4310,0.9999
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",3.5315,1.7012,0.4817
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.5315,1.7941,0.5080
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.5315,1.8227,0.5161
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"as-built, gain fit R 13k",3.5315,2.1015,0.5951
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"as-built, gain fit R 17k",3.5315,2.3159,0.6558
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.5315,1.0722,0.3036
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.468,16.00,shorted,"repaired, healthy TL431 REF 4 uA",3.5315,3.5311,0.9999
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"as-built, gain fit 0.48 R 8.19k",3.0997,1.4868,0.4796
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.0997,1.5797,0.5096
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.0997,1.6011,0.5165
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"as-built, gain fit R 13k",3.0997,1.8442,0.5949
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"as-built, gain fit R 17k",3.0997,2.0372,0.6572
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.0997,0.8864,0.2859
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.80,shorted,"repaired, healthy TL431 REF 4 uA",3.0997,3.0951,0.9985
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"as-built, gain fit 0.48 R 8.19k",3.1997,1.5368,0.4803
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.1997,1.6297,0.5093
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.1997,1.6512,0.5160
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"as-built, gain fit R 13k",3.1997,1.9014,0.5942
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"as-built, gain fit R 17k",3.1997,2.1015,0.6568
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.9149,0.2859
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,shorted,"repaired, healthy TL431 REF 4 uA",3.1997,3.1951,0.9986
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"as-built, gain fit 0.48 R 8.19k",3.2997,1.5869,0.4809
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"as-built, dip fit V_on 1.19 V R 9.2k",3.2997,1.6798,0.5091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"as-built, dip fit V_on 1.25 V R 9.5k",3.2997,1.7012,0.5156
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"as-built, gain fit R 13k",3.2997,1.9657,0.5957
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"as-built, gain fit R 17k",3.2997,2.1658,0.6564
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.2997,0.9435,0.2859
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,16.00,shorted,"repaired, healthy TL431 REF 4 uA",3.2997,3.2952,0.9986

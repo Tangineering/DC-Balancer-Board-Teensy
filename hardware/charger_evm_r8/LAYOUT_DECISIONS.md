@@ -13,7 +13,90 @@ design names no other printed circuit board. The bond coupon of the E BOM is a s
 workshop. The FT1/FT2 feet and the B1R wedge are machined parts, and the EVM plate is a mechanical plate. None of
 these is a KiCad project.
 
-Status on 2026-11-13:
+Status on 2026-11-15 (phase C of the 2026-11-14 round):
+
+| Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
+|---|---|---|---|---|---|---|
+| EIB | complete; part fields synchronized with the ordered BOM (D-82); Note field added on J201 (D-88) | complete | complete; tracks, vias, pads and zone outlines unchanged since D-68, pour fill changed at J201 by D-70; D-70 to D-78 as below; F.Silkscreen E-pad numbers, resized or shifted B.Silkscreen E labels and the "E1 JP12.1" label (D-86) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`eib/drc.rpt`, 2026-11-15T05:36:57) | `fab/eib_2026-11-14/`, written again in place on 2026-11-15 (D-90); not ordered |
+| CR | complete; part fields synchronized with the ordered BOM (D-82); J1 and J102 Notes corrected and six Note fields added (D-88) | complete | complete; tracks, vias, pads and zone outlines unchanged since D-69, F.Cu pour fill changed at J1 pin 18 by D-75; D-72 to D-78 as below; "VIN1" and "GND" labels at W1/W2 and the W1 reference moved (D-85) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`cr/drc.rpt`, 2026-11-15T05:29:19) | `fab/cr_2026-11-14/`, written again in place on 2026-11-15 (D-90); not ordered |
+
+Phase C answers the second holistic review of the r9-25 records (findings R2-*; per-finding status in
+`update_2026-11-14/notes_phaseC_*.md`). D-85 to D-92 record it. The board edits are silkscreen texts only (D-85,
+D-86). `gen/pcbdiff.py` against git HEAD `014c745` gives CR 692 / 692 segments and 420 / 420 vias and EIB 332 / 332
+segments and 93 / 93 vias, with 0 added or removed on either board; zones differ in fill only (D-70, D-75). The CR
+constraint check (`cr/constraint_check.md`) has 129 rows: 107 pass, 1 pass with the exceptions listed in the rows
+above it, 3 exemption rows, 18 information rows and 0 FAIL; the D-20 stitching row still reads 3.49 mm at (31.0,
+34.8) against 3.54 mm. The EIB constraint check has 6 pass rows and 2 information rows (D-87). Design revision r9-26
+and companion revision r4 carry the matching document changes.
+
+The round leaves these items for the operator. Items 1 to 5 and 11 to 13 change no copper; items 9 and 10 name a
+copper change as one option:
+
+1. Closed 2026-11-15 (D-93): J.2 item 74, the U101 OVP band against the VESC regen limit. The operator accepted the
+   charger dropout on hard brakes; the divider, R101 and the Mouser file are unchanged (section 11 item 35).
+   (**Superseded 2026-11-15:** "Accept a charger dropout on hard brakes, set the VESC regen limit below the OVP rising
+   minimum, or retune the OVP divider. Lever (a) is R103 68.1 kOhm and R104 47.5 kOhm 0.1 % with R102 845 kOhm: OVP
+   rising 23.256-26.863 V, OVP falling 21.439-24.614 V and UVLO rising 9.092-10.571 V at the sim 5 leakage corners
+   (`sim/chopper/RESULTS.md` section 5.8; D-91). A retune changes R103, R104 and possibly R101 in
+   `bom_2026-11-14/mouser_import.csv`, so the ruling precedes the Mouser order (section 11 item 35).")
+2. FR-50 and FR-51 (firmware round): the `OV_CHG` threshold, response and filter, on the as-fitted OVP bands (D-93) (**Superseded
+   2026-11-15, D-93:** "ruled with item 1"); and the recovery
+   of a latched U101 in Run (section 11 item 36).
+3. J.2 item 77: the T2 interruption option, from the sim 4 section 5.6a option table (section 11 items 32 and 37;
+   D-81, D-91).
+4. J.2 item 78: the H1 fall worst case 17.843 V against the VINDPM_STAGE1 minimum 17.84 V (section 11 item 38).
+5. FW-0: the `CLAUDE.md` section 1-3 conflicts, a precondition of the firmware round (section 11 item 39).
+6. D103: keep the ordered STPS2H100A or fit the MBRA2H100T3G alternate (D-79; section 11 item 30).
+7. C108 = 470 pF at assembly (D-81; part of item 3).
+8. Closed 2026-11-16 (D-95): the phase B EIB reference rule set stays (18 of 26 fitted references on top), and the
+   CR W6 "GND" label stays as placed; neither board is exported again. The W3/J1 inspection half of section 11 item 29
+   stays open. (**Superseded 2026-11-16, D-95:** "The EIB reference rule set (D-78) and the W6 "GND" label at 0.086 mm
+   from a mask opening (D-73).")
+9. Closed 2026-11-16 (D-80 ruling): the copper of both boards stays, and the staged T-A-06 metering (design r9-26)
+   is the W5 single-bridge mitigation; the grid reorder is declined (section 11 item 31). (**Superseded 2026-11-16,
+   D-80 ruling:** "The W5 grids: the staged T-A-06 metering (design r9-26) or a grid reorder, a copper change (D-80;
+   section 11 item 31). **Amended 2026-11-16 (D-80 addendum):** not ruled; the addendum records the deep-dive
+   findings and the candidate mitigations.")
+10. J.2 item 82 (the strap at 2.77 A) (section 11 item 40). The J.2 item 83 half is closed 2026-11-16 (D-94):
+    /CHG_ARM keeps its route under a conditional D-36 exemption (section 11 item 41). (**Superseded 2026-11-16,
+    D-94:** "J.2 item 82 (the strap at 2.77 A) and J.2 item 83 (/CHG_ARM in the D-36 zone; a re-route is a copper
+    change) (section 11 items 40 and 41).")
+11. J.2 item 84: the T-C-04 repetitions on the only U101 and a spare U101 in the Mouser order (section 11 item 42).
+12. J.2 item 85: C103 stays 1.0 uF or becomes a 4.7 uF part (section 11 item 43).
+13. The five opt-in SPARE lines of `bom_2026-11-14/digikey_optional.csv` (D-89; section 11 item 44).
+
+Status on 2026-11-14 (history; superseded by the 2026-11-15 table above):
+
+| Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
+|---|---|---|---|---|---|---|
+| EIB | complete; part fields synchronized with the ordered BOM (D-82) | complete | complete; tracks, vias, pads and zone outlines unchanged since D-68, pour fill changed at J201 by D-70 (**Superseded 2026-11-14, fix round 2026-11-15:** "copper unchanged since D-68"); pour clearance at J201 (D-70), no paste on DNP pads (D-71), pin-1 dots (D-72), J201 map and E labels (D-73), references and board marking (D-74, D-78), stack-up block (D-76) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/eib_2026-11-14/`, written on 2026-11-15 by `gen/export.sh eib 2026-11-14` (**Superseded 2026-11-14, package exported:** "to be written by `gen/export.sh eib 2026-11-14`; the last exported package is `fab/eib_2026-11-13c/`"); not ordered |
+| CR | complete; part fields synchronized with the ordered BOM (D-82) | complete | complete; tracks, vias, pads and zone outlines unchanged since D-69, F.Cu pour fill changed at J1 pin 18 by D-75 (**Superseded 2026-11-14, fix round 2026-11-15:** "copper unchanged since D-69"); pin-1 and cathode marks (D-72), J101 map and W-lead labels (D-73), references and board marking (D-74, D-78), J1 pin-18 solid zone connection (D-75), stack-up block (D-76) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-14/`, written on 2026-11-15 by `gen/export.sh cr 2026-11-14` (**Superseded 2026-11-14, package exported:** "to be written by `gen/export.sh cr 2026-11-14`; the last exported package is `fab/cr_2026-11-13f/`"); not ordered |
+
+The 2026-11-14 round answers the read-only review `REVIEW_2026-11-14.md` and the five simulations in `sim/`
+(`sim/README.md`). D-70 to D-84 record it. Phase A edited silkscreen, paste, pours and stack-up in place (D-70 to
+D-77). Phase B fixed three silkscreen defects of the phase A check (D-78), recorded three part decisions (D-79 to
+D-81), synchronized the netlist with the ordered parts (D-82) and regenerated the BOM set (D-83). D-84 records the EIB
+REGN deviation. Copper is unchanged on both boards: `gen/pcbdiff.py` against git HEAD `014c745` gives CR 692 / 692
+segments and 420 / 420 vias, EIB 332 / 332 segments and 93 / 93 vias, and zone changes in fill only.
+
+The CR constraint check (`cr/constraint_check.md`, regenerated 2026-11-14) has 128 rows: 108 pass, 1 pass with the
+exceptions listed in the rows above it (IC pitch, D-39), 3 exemption rows (R102 under D-20; R103 and R129 as listed
+U101-network exemptions), 16 information rows and 0 FAIL. The D-20 stitching row reads 303 stitch points and 3.49 mm
+at (31.0, 34.8) against 3.54 mm. The EIB constraint check (`eib/constraint_check.md`) has 5 pass rows, 1 deviation row
+(the D-25 outline) and 2 information rows. `cr/geometry_check.md` was regenerated by `gen/cr_geometry.py` on
+2026-11-14 (REVIEW CRL-0): 28 pass rows and 3 information rows on the D-62 outline.
+
+The round leaves these items for the operator. None of them changes copper:
+
+- D103: keep the ordered STPS2H100A or fit the onsemi MBRA2H100T3G alternate (D-79).
+- The W5 wire-pad grids: a post-solder isolation check of the orthogonal J101 and J201 pad pairs, or a grid reorder
+  (D-80).
+- C108: fit the 470 pF assembly option or keep 1.0 nF; the brief T2 interruption hazard remains either way (D-81).
+- The EIB reference rule set: the stricter phase B rules (18 of 26 fitted references on the top side) or the phase A
+  rules (22 of 26) (D-78).
+- The W6 "GND" label at 0.086 mm from a mask opening against the 0.10 mm phase B rule (D-73).
+
+Status on 2026-11-13 (history; superseded by the 2026-11-14 table above):
 
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
@@ -21,8 +104,10 @@ Status on 2026-11-13:
 | CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66; U101 TCKE1401NM D-67; U101 paste windows D-69) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13f/` (exported after D-69; copper equals `fab/cr_2026-11-13d/`); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
-(`cr/constraint_check.md`) gives 109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54
-mm, and the D-62 outline rows), 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions,
+(`cr/constraint_check.md`) gives 108 pass rows, 1 pass row with listed exceptions, 0 FAIL (including the D-20
+stitching row, 3.49 mm against 3.54 mm since D-66, and the D-62 outline rows) (**Superseded 2026-11-14, REVIEW
+DOC-10:** "109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54 mm"; the count
+included the IC-pitch row "pass (rows above list any exception)", and D-66 moved the stitching figure to 3.49 mm), 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions,
 D-55/D-56) and 16 information rows (D-56). The fabricator of the CR is OSH Park (bare board), with the rule file
 `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate order
 and is not on the CR panel. Neither package has been ordered. The operator's pre-order review of the routed CR and the
@@ -141,8 +226,12 @@ All board data is generated by the scripts in `gen/`. The scripts are the record
 | Signal routing (CR, D-58) | corridor router `tools/pcb/corridor_route/` with a plan file (board-routing method; plan softum chosen by the route-race r9 study, D-58) | poured board | routed board |
 | Signal routing (EIB; r7-outline CR, history) | Freerouting 2.5.0 (`route.py`), `gen/pathfinder.py`, `gen/finish_*.py`, `gen/finish.sh` | board dump | routed board |
 | Reference designators (CR, D-59) | `gen/silk_refs.py` | routed board | reference fields on F.Silkscreen or F.Fab, `cr/silk_refs.md` |
+| In-place edits of 2026-11-14 (D-70 to D-78) | CR: `gen/cr_pin1_marks.py`, `gen/cr_silk_refs_r2.py`, `gen/cr_wire_labels.py`, `gen/cr_lead_labels.py`, `gen/cr_j1_pin18_solid.py`, `gen/cr_stackup.py`, `gen/cr_silk_fix_r3.py`, `gen/cr_silk_refs_report.py`; EIB: `gen/eib_j201_pour_clearance.py`, `gen/eib_dnp_paste.py`, `gen/eib_pin1_marks.py`, `gen/eib_board_marking.py`, `gen/eib_wire_labels.py`, `gen/eib_silk_refs_r2.py`, `gen/eib_stackup.py` | current board | marks, maps, labels, references, pour and paste settings, stack-up block; `cr/silk_refs.md`, `eib/silk_refs.md` (run order below the table) |
+| Part fields (D-67, D-82, D-88) | `gen/sync_fields.py` (`--add-missing` since D-88) | board, exported netlist | Value, MPN, Manufacturer and Note fields of the footprints; with `--add-missing`, a missing field is added as a hidden F.Fab field |
+| In-place silkscreen edits of 2026-11-15 (D-85, D-86) | CR: `gen/cr_silk_fix_r4.py`; EIB: `gen/eib_silk_fix_r3.py` | current board | CR "VIN1"/"GND" labels and W1 reference; EIB E-pad numbers and E labels |
+| NPTH gate (D-77) | `gen/npth_check.py` (run by `gen/export.sh`) | checked board | `reports/npth_check.txt` |
 | Checks | `gen/check_constraints.py` | built board | `<board>/constraint_check.md` |
-| Fab package | `gen/export.sh`, `gen/fab_readme.py` | checked board | `fab/<board>_<date>/` (current: `fab/cr_2026-11-13/`, `fab/eib_2026-11-13/`) |
+| Fab package | `gen/export.sh`, `gen/fab_readme.py` | checked board | `fab/<board>_<date>/` (current: `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`, written on 2026-11-15 by `gen/export.sh cr 2026-11-14` and `gen/export.sh eib 2026-11-14`; **superseded 2026-11-14, packages exported:** "next: `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`, to be written by `gen/export.sh cr 2026-11-14` and `gen/export.sh eib 2026-11-14`; last exported: `fab/cr_2026-11-13f/`, `fab/eib_2026-11-13c/`"; **superseded 2026-11-14:** "current: `fab/cr_2026-11-13/`, `fab/eib_2026-11-13/`") |
 
 To regenerate the EIB, run `bash gen/make_eib_all.sh` from `hardware/charger_evm_r8`. To regenerate the CR up to
 the pour stage, run `bash gen/make_board.sh cr` and then `ROUTE_SKIP_FR=1` `gen/route.py cr ../cr` from `gen/`. Restore
@@ -150,6 +239,64 @@ the pour stage, run `bash gen/make_board.sh cr` and then `ROUTE_SKIP_FR=1` `gen/
 corridor router `tools/pcb/corridor_route/` with plan softum, seed 1 (D-58), and `gen/silk_refs.py` places the
 reference fields (D-59). On the r7 outline, `gen/make_cr_all.sh` ran the first two steps and then the PathFinder
 stage; it does not route the plug-on CR.
+
+**Amended 2026-11-14 (D-70 to D-78, D-82).** No generator reproduces the boards of 2026-11-13: the operator cleanup
+`547dc11` and the D-65 to D-69 in-place edits break the sequence (`RESPIN_HANDOFF_2026-11-13.md` section 3.3.3). The
+2026-11-14 changes are therefore idempotent pcbnew scripts that edit the current boards in place. Run them from
+`hardware/charger_evm_r8` with the pcbnew venv, in this order. On the CR:
+
+1. `gen/cr_pin1_marks.py` (D-72);
+2. `gen/cr_silk_refs_r2.py` (D-74);
+3. `gen/cr_wire_labels.py` (D-73);
+4. `gen/cr_lead_labels.py` (D-73);
+5. `gen/cr_j1_pin18_solid.py` (D-75);
+6. `gen/cr_stackup.py` (D-76);
+7. `gen/cr_silk_fix_r3.py` (D-78);
+8. `gen/sync_fields.py --add-missing cr/cr.kicad_pcb cr/cr.net`, after `gen/sch.py cr cr` and the `kicad-cli` ERC and
+   netlist export (D-82, D-88);
+9. `gen/cr_silk_fix_r4.py` (D-85, added 2026-11-15);
+10. `gen/cr_silk_refs_report.py`, which writes `cr/silk_refs.md` and does not change the board (D-78).
+(**Superseded 2026-11-15, D-85 and D-88:** the nine-step CR order without `gen/cr_silk_fix_r4.py` and without
+`--add-missing`.)
+
+On the EIB:
+
+1. `gen/eib_j201_pour_clearance.py` (D-70);
+2. `gen/eib_dnp_paste.py` (D-71);
+3. `gen/eib_pin1_marks.py` (D-72);
+4. `gen/eib_board_marking.py` (D-74, D-78);
+5. `gen/eib_wire_labels.py` (D-73);
+6. `gen/eib_silk_refs_r2.py eib/silk_refs.md` (D-74, D-78);
+7. `gen/eib_stackup.py` (D-76);
+8. `gen/eib_board_marking.py` and `gen/eib_silk_refs_r2.py eib/silk_refs.md` again (the D-78 rules are checked against
+   the J201 map of step 5);
+9. `gen/sync_fields.py --add-missing eib/eib.kicad_pcb eib/eib.net`, after `gen/sch.py eib eib` and the `kicad-cli`
+   ERC and netlist export (D-82, D-88);
+10. `gen/eib_silk_fix_r3.py` (D-86, added 2026-11-15), always last.
+(**Superseded 2026-11-15, D-86 and D-88:** the nine-step EIB order without `gen/eib_silk_fix_r3.py` and without
+`--add-missing`.)
+
+Both sequences were run on a scratch copy of the git HEAD `014c745` boards with the 2026-11-14 `gen/` scripts and
+netlists. The CR result equals the working-tree board: 0 segments, vias, zones or footprints differ, every reference
+field is identical, and `cr/silk_refs.md`, `cr/cr.kicad_dru` and the CR library match. The EIB result has identical
+copper, zones, rule file, library and board texts. Only the F.Fab field positions of C202, C203, R252, R254, U201 and
+U202 differ, because `gen/eib_silk_refs_r2.py` leaves an F.Fab field where the previous state put it. A full
+regeneration with `gen/make_board.sh` loses the D-65 to D-69 edits; after such a regeneration, run the two sequences
+above in the stated order. `gen/fab_readme.py` and `gen/export.sh` (with the `gen/npth_check.py` gate, D-77) then
+write the package.
+
+**Amended 2026-11-15 (D-85 to D-88).** Both new scripts remove their own texts and place them again; a second run
+gives the same positions to the nanometre. A replay of the two sequences on a scratch copy of the `014c745` boards,
+with the current netlists and the two new scripts at the end, again equals the working-tree CR in every text and
+field and the working-tree EIB except the six F.Fab field positions above (`update_2026-11-14/notes_phaseC_board.md`
+section 8). Three tool residuals are known and not changed:
+
+- `gen/cr_silk_refs_r2.py` stops on the current CR ("R107 bottom position blocked"), so the CR sequence replays from
+  `014c745` only and cannot run again on the current board;
+- a re-run of `gen/cr_lead_labels.py` on the current CR removes the W2 "GND" text and places "TS" differently;
+  `gen/cr_silk_fix_r4.py` then places "GND" above W2, which differs from the recorded board;
+- `gen/eib_silk_refs_r2.py eib/silk_refs.md` writes only its table and removes the hand-kept sections 1, 2 and 4 of
+  `eib/silk_refs.md`; restore those sections from git after such a run.
 
 ## 3. Coordinate frame and pin identity
 
@@ -212,8 +359,10 @@ The table above records the r7 footprints. The following rules replace it on the
 - **U101.** The footprint stays (D-40). The nine exposed-pad thermal vias stay, exempt from D-37, with window-pane
   stencil apertures and L4 tenting.
 - **0603 passives.** R101, R103, R104, R105, R106s and C101 change from 0402 to 0603 (D-44).
-- **SC70-5 row.** The row retires. U107 becomes SN74LVC1G11DBVR (SOT-23-5, DBV), and no SC70 part remains on the CR
-  (D-44, D-47). TODO(verify: TI Pin Functions tables) the DBV pinout against the DCK pinout, pin by pin against B.8.
+- **SC70-5 row.** The row retires. U107 becomes SN74LVC1G11DBVR (SOT-23-6, DBV), and no SC70 part remains on the CR
+  (D-44, D-47). SCES487I Table 4-1, closed (section 11 item 18). (**Superseded 2026-11-14, REVIEW LOG-4:**
+  "(SOT-23-5, DBV)"; "TODO(verify: TI Pin Functions tables) the DBV pinout against the DCK pinout, pin by pin
+  against B.8.")
 - **SN74LVC DCT row.** It applies to U105, U106, U110 and U118, which keep the DCT package (D-44).
 - **J-TAP.** A Molex Micro-Fit 3.0 2 x 5 through-hole header is added (D-46). Its footprint comes from the Molex
   drawing, TODO(verify: Molex 43045 header drawing). (**Superseded 2026-11-13:** "TODO(verify: Molex 43045 header
@@ -368,6 +517,12 @@ carries its reference designator on the top silkscreen, which helps stencil asse
 pin-1 mark stay. The text size against the OSH Park silkscreen minimums is TODO(verify: OSH Park); keeping the
 0.8 / 0.15 mm values as a house rule is the design owner's choice.
 
+**Amended 2026-11-14 (D-72, D-74, D-78).** The silkscreen now also carries pin-1 dots and SMA cathode bars on the ICs
+and diodes listed in D-72, the J101 and J201 wire-pad maps and the W-lead labels (D-73), and a board marking on each
+board (D-74, D-78). A reference with no legal top-side position goes onto B.Silkscreen, mirrored, over its part, and
+its F.Fab `${REFERENCE}` text stays: 7 CR references and 8 fitted EIB references (D-78). These bottom-side references
+can be read only before the CR is plugged onto the MB and before the EIB is mounted on its standoffs.
+
 ### 5.3 Footprint interior, divider strip and tab Y (A.8)
 
 **D-13. Divider strip.** R109-R112, R114 and R115 (0.1 % dividers) lie inside the A.8 divider strip x 23.15-36.50,
@@ -520,6 +675,9 @@ short F.Cu necks, operator ruling 2026-11-13 (design session, chat 2026-11-13: "
 widened to a 3.645 mm narrowest section, joins pad 10 solid and has three vias at the C102c end; design-document row
 H.25 checks it (2.57 A at 10 C against the 2.41 A basis on a curve fit of the IPC-2152 chart).
 
+**Amended 2026-11-14 (REVIEW CRL-1).** The A.8 length rule "VCHG-IN copper from pad 10 to U101 IN/IN_SYS <= 5 mm"
+is not met; D-56 records the measured path of about 7.3 mm and its exemption.
+
 **D-22. VCHGOUT (P-02).** VCHGOUT runs as one L1 pour from OUT 17/18 over C103 and the D103 cathode, and from
 there below the D103 anode to W1 through a 2.8 mm corridor (`route_cr.VOUT_L1`, box x 29.10-36.80, y 60.00-63.80),
 with no part on the top of that belt. Four vias under the cathode join a parallel L4 strap to W1. The earlier L3
@@ -564,7 +722,11 @@ E6 leads are not fitted.
 **D-28. EIB routing and ground.** Signals run on both layers (0.2 mm tracks and clearance, 0.6/0.3 mm vias),
 routed by Freerouting in three rounds. The AGND pour on the bottom layer is added after routing and joins E8 (A.9
 Ground row); R273 links the J201 GND pins (`GND_J`) to AGND. (**Amended 2026-11-13** (D-63): a matching AGND pour is
-added on the top layer, and AGND stitching vias tie the two pours.)
+added on the top layer, and AGND stitching vias tie the two pours.) (**Corrected 2026-11-14** (D-70, REVIEW
+EIL-0): both AGND zones declare a 0.2 mm local clearance, but the fill follows the 0.1524 mm `fab_clearance`
+rule of the 2-layer rule file; the J201 gaps of 0.1529-0.1572 mm measured before D-70 agree with 0.1524 mm
+(`update_2026-11-14/notes_eib.md` section 2.1). The 0.2 mm figure of this entry applies to tracks; the
+pour-to-pad clearance is 0.1524 mm except where D-68 and D-70 set 0.5 mm.)
 
 **D-63. Straightened EIB tracks, a top-layer AGND pour and AGND stitching vias (operator request 2026-11-13).** The
 operator asked for the trace-bend cleanup and ground stitching on the EIB, the EIB counterpart of D-61, followed by
@@ -607,6 +769,9 @@ C202, C203, R253, R266, R274, R275 and U201 (`eib/silk_refs.md`). Copper, nets a
 of the package Gerbers, only `eib-F_Silkscreen.gto` differs from the D-63 export. The board text "EIB r8 2026-11-11"
 is unchanged. Reversal: restore `eib/eib.kicad_pcb` from the commit before D-64 and run `gen/export.sh eib
 2026-11-13` and `gen/fab_readme.py eib 2026-11-13 fab/eib_2026-11-11` again.
+
+**Amended 2026-11-14 (D-74, D-78).** `gen/eib_silk_refs_r2.py` replaces the D-64 placement, and `eib/silk_refs.md`
+holds its table. The board text "EIB r8 2026-11-11" is now "EIB r8 2026-11-14".
 
 ## 8. CR routing attempts
 
@@ -701,6 +866,9 @@ outline, and the routing on the new outline is the full route-race of D-50. The 
 archived at `archive_r7_outline/cr/interactive/`. The via-in-pad ruling is not revoked; D-37 makes it
 the fallback. The divider-top ruling stays in force (D-35).
 
+**Amended 2026-11-16 (D-94).** The /CHG_ARM exemption at R114 is an operator ruling on comparative grounds. A
+zone-free route exists, so the "no other route exists" test of this entry is not met for that net.
+
 **D-37. Via-in-pad order of use (operator ruling 2026-11-12, with the CR outline change request).** The operator
 assembles the CR by stencil, solder paste and reflow. An unfilled via in a pasted pad can draw solder down the barrel
 and starve the joint. The routing on the new outline therefore proceeds in this order:
@@ -778,7 +946,9 @@ digest, and its reconciliation notes bind where a record disagrees.
 **D-41. Mating connector and stack (operator ruling 2026-11-12).**
 
 - Decision: a Samtec 2-piece stack. The MB carries SSQ-110-01-L-S (column x 45.998, pins 1-10) and SSQ-112-01-L-S
-  (column x 20.998, pins 11-22) sockets. The CR carries TSW-110-07-L-S and TSW-112-07-L-S pins, with the bodies on the
+  (column x 20.998, pins 11-22) sockets. (**Amended 2026-11-15, REVIEW R2-INT-4:** the ordered and PM4 sockets are
+  SSQ-110-01-G-S and SSQ-112-01-G-S, -G plating (`bom_2026-11-14/digikey_import.csv`); the -L-S part numbers of this
+  entry are the 2026-11-12 record.) The CR carries TSW-110-07-L-S and TSW-112-07-L-S pins, with the bodies on the
   CR underside and the tails soldered from the CR top. All 22 positions are populated. The stack has a hard stop: the
   TSW body seats on the SSQ face, so the CR underside stands 11.05 mm above the MB top and the CR top at 12.65 mm.
   The CR carries no mechanical key.
@@ -849,7 +1019,8 @@ digest, and its reconciliation notes bind where a record disagrees.
   DCT. The record's "U106 to SN74LVC1G32DBVR" row is void, because U106 now uses both sections (D-47). If a
   regenerated placement does not fit on the top side, the design owner escalates to the operator. The area booking is
   recomputed with the reduced list, the 0603 and DBV parts and the 0.25 mm courtyards. TODO(verify: Murata) for
-  GRM188R71H223KA01D; TODO(verify: TI Pin Functions tables) for the DBV pinout of U107. Record:
+  GRM188R71H223KA01D; the DBV pinout of U107 is closed by SCES487I Table 4-1 (section 11 item 18; superseded
+  2026-11-14, REVIEW LOG-4: "TODO(verify: TI Pin Functions tables) for the DBV pinout of U107"). Record:
   `decisions_2026-11-12/round2/dec2_parts_assembly_2026-11-12.md`.
 
 **D-45. Lead termination (operator ruling 2026-11-12).**
@@ -1174,6 +1345,31 @@ Table D-53. Identity of the frozen CR netlist (r9-13).
 
 A re-export from the unchanged schematic changes only the export-time `(date ...)` line; the second hash reproduces.
 
+**Amendment 2026-11-14 (REVIEW DOC-11; D-66, D-67, D-82).** D-66 changed connectivity and D-67 changed values without
+a recorded re-freeze, so Table D-53 no longer identified `cr/cr.net`. Table D-53b records two states: the netlist
+after D-67 (committed at `014c745`) and the netlist after the D-82 field synchronization. Table D-53 stays as the
+r9-13 record.
+
+Table D-53b. Identity of the CR netlist after D-67 and after D-82.
+
+| Item | After D-67 (`014c745`) | After D-82 (2026-11-14, current) |
+|---|---|---|
+| Export time (`(date ...)` line) | 2026-11-13T19:08:55-0800 | 2026-11-15T02:06:43-0800 |
+| sha256 of the working-tree file | `514be37703e098767bfbe8f684d8cf8ef926c315cff6ae9e926dbcf10aa24fef` (`snapshots/2026-11-14_pre_review/cr/cr.net`) | `39a6c6599778b46d6d14168c685502dc6af4ff881dfcb1e02e0fd55c56a2ea3d` |
+| sha256 without the two `(date ...)` lines | `65c7d9800729803c2d382ec8d49bfef8654f953ee54f520f229a7413ec855a2a` | `3cd26f60d09e7b8450399e29c79dd2338d9cae8339810171c10e767dd9ab1d11` |
+| Generator | as committed at `014c745` | `gen/netlist.py` sha256 `7ecd2c6c744fa228c52d1af1fcca976dde42616c849040d2477e4a638650a039`; `gen/sch.py` sha256 `6827b59097696284c4c8ecd826c5e8b32c6270e48408c0fad65ecd7c8272bbb8` |
+| Parts | 78 | 78 |
+| Nets | 77: 54 connected nets and 23 single-pin `unconnected-` nets; 258 pin nodes | 77: 54 connected nets and 23 single-pin `unconnected-` nets; 258 pin nodes |
+| Connectivity against Table D-53 (r9-13) | J101 pins 11-14 removed (D-66: the ribbon conductors 11 and 13 were single-pin nets, 12 and 14 GND); J101 becomes the WIRE9 footprint; the eight single-pin U101 nets renamed with the Toshiba pin names (D-67) | as after D-67 (net membership identical, scratch `netcmp.py`, `update_2026-11-14/notes_phaseB_bom.md`) |
+| Value changes against Table D-53 | U101 TCKE1401NM; R101 8.45 kOhm; R103 64.9 kOhm; R104 51.1 kOhm (D-67) | as after D-67, plus the D-82 value fields: C102b "4.7uF 100V X7R", the eleven CR 100 nF parts "100nF 100V X7R", C125 "10uF 16V X7R", D103 "Schottky 100V 2A SMA" |
+| ERC (`cr/erc.rpt`) | 0 errors, 0 warnings | 0 errors, 0 warnings |
+
+The EIB netlist after D-82 (`eib/eib.net`) has 46 parts and 35 nets (3 single-pin `unconnected-` nets, 111 pin nodes);
+sha256 `14ff571313de4b3dc09508ea5542ef6a8c77f964cc339da723c5622102ff2d0b`, without the `(date ...)` lines
+`774519aa10f3da6431dfd9a727fc34c2ffe9e429bb46ac046a778e5a067b025f`. Its net membership equals the `014c745` netlist.
+The full-file sha256 depends on the export time and the line endings, so the date-stripped hash identifies the
+content. The hashes of the current state are recomputed after any later `gen/netlist.py` change.
+
 Table D-53a. Identity of the r9-12 freeze (**superseded in r9-13**; history only).
 
 | Item | Value |
@@ -1393,6 +1589,16 @@ rows. DRC reports 124 violations (75 silk over copper, 49 silk overlap, all refe
 and 0 parity issues; the two removed unconnected items are the D-55 /GND fill islands, as review trial 4 predicted.
 Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
 
+**Amended 2026-11-14 (REVIEW CRL-1): exemption from the A.8 VCHG-IN length rule.** A.8 (design document, Header-pin
+current bullet) asks for VCHG-IN copper of at most 5 mm from J1 pad 10 to U101 IN/IN_SYS. With the L3 strap as the
+only pad-10 path, the measured path is about 7.3 mm. It runs 6.31 mm from pad 10 at (45.998, 38.056) to the nearest
+F.Cu-In2.Cu via at (39.75, 38.95), then about 0.95 mm on F.Cu to U101 pin 1 (review CRL-1 verifier note, pcbnew
+measurement; KiCad frame). The other two strap vias are at (39.75, 39.65) and (39.75, 40.35). The rule guards against
+exposed unfused VCHG-IN copper. The strap is buried on In2.Cu between the In1.Cu and B.Cu GND planes, so no exposed
+copper results, and the masking intent holds. The length rule is therefore exempted for this path, and the board does
+not change. No constraint row measures the path; the design-document A.8 row needs the same exemption (design-document
+change, outside this log).
+
 **D-57. C102c ground pad: /GND pre-via and strap extension (2026-11-13; route-race r9 change request R9-01).**
 
 - Decision: a /GND pre-via at (42.30, 59.30), joined to C102c pad 2 by a 0.4 mm F.Cu track, is added to
@@ -1458,6 +1664,12 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   its part, so the interactive BOM is the assembly reference. `cr/silk_refs.md` lists each reference with its text
   height, angle and gap to its own courtyard. Reversal: restore the reference fields from 621fb28 (DRC then reports the
   124 items again), or move every small-part reference to F.Fab (D-12a as first written).
+
+**Amended 2026-11-14 (D-74, D-78).** The references are no longer as D-59 and D-62 left them. On the current board 54
+references are on F.Silkscreen, 7 on B.Silkscreen (mirrored, over the part: C102a, C102c, C119, C131, R107, U107,
+U119) and 17 on F.Fab only (C107, C115, C130, C132, D105, D106, R122, R130, R131B, R147, R184-R189, U110). W3 is on
+F.Silkscreen. `cr/silk_refs.md` is now written by `gen/cr_silk_refs_report.py` from the board, with a layer column and
+gaps to the courtyard polygons.
 
 **D-60. Trimmed CR outline and four 6-32 holes (operator rulings 2026-11-13; route-race r9 change request R9-02).**
 
@@ -1675,11 +1887,20 @@ the footprint, the nets and the copper do not change. The KiCad footprint keeps 
   (an extrapolation, TODO(verify: T-C-04)), about 0.21 A above the 1.76 A regen-clamp maximum (TPS26630: 0.30 A).
 - **R103** 66.5 kOhm -> **64.9 kOhm 0.1 %** (Panasonic ERA-3AEB6492V; 64.2 kOhm 0.1 % is not stocked) and **R104**
   49.9 kOhm -> **51.1 kOhm 0.1 %** (TNPW060351K1BEEA); R102 stays 845 kOhm. With V_OVPR 1.233 V (1.18-1.298 V) and
-  V_UVLOR 1.19 V (1.142-1.224 V): OVP rising 23.19 V typical, 22.19-24.41 V; UVLO rising 9.86 V typical, 9.46-10.14 V.
+  V_UVLOR 1.19 V (1.142-1.224 V): OVP rising 23.19 V typical; with the OVP and UVLO pin leakage, OVP
+  rising 21.588-25.019 V, OVP falling 19.899-22.927 V and UVLO rising 9.055-10.548 V (`sim/efuse_decay/RESULTS.md`
+  Table 1; `sim/chopper/RESULTS.md` section 5.8) (**Superseded 2026-11-14, sim 5 Table 1, REVIEW PWR-2; marked
+  2026-11-15, REVIEW R2-PWR-1 and R2-DOC-3:** "OVP rising 23.19 V typical, 22.19-24.41 V; UVLO rising 9.86 V typical,
+  9.46-10.14 V", the bands without pin leakage).
   The OVP band no longer fits 22.6-23.6 V: its low end is 0.09 V below the 22.28 V design clamp (a nuisance OVP trip is
   possible at the tolerance limit) and its high end is 0.41 V above the BQ25798 recommended VBUS maximum (24 V), below the
-  BQ25798 VBUS_OVP (25.2-26.2 V). The operator accepted both with the part choice. The UVLO maximum keeps 0.06 V below the
-  FR-30 10.2 V threshold.
+  BQ25798 VBUS_OVP (25.2-26.2 V). The operator accepted both with the part choice. **Amended 2026-11-15 (REVIEW R2-PWR-1,
+  R2-DOC-3):** the acceptance rests on the bands without leakage. With leakage, the OVP rising minimum 21.588 V lies
+  0.692 V below the 22.28 V clamp figure, which design J.2 item 81 marks invalid (V_rgn premise); the maximum
+  25.019 V lies 1.019 V above 24 V and 0.181 V below the 25.2 V VBUS_OVP minimum. The UVLO rising maximum 10.548 V
+  lies 0.348 V above the FR-30 10.2 V threshold (sim 5 section 4.1; design J.2 item 74). The OVP band question is
+  design J.2 item 74 (section 11 item 35). (**Superseded 2026-11-14, sim 5 Table 1:** "The UVLO maximum keeps 0.06 V
+  below the FR-30 10.2 V threshold.")
 - R105 (27.4 kOhm, IMON 0.764 V/A typical), R106s, R129/C129, C101 (22 nF: 7.28 ms at 15.9 V, Formula 2), C102a-c, C103,
   D103 and D107 are unchanged. The IMON gain spreads wider (22.3-33.5 uA/A at 1-2 A, against 25.66-30.14), which T-B-14
   calibration absorbs. Table 10.1 Note 13 ("1 kOhm <= RIMON <= 10 kOhm" when VSYS < 9 V) is accepted as a risk and R105 stays 27.4 kOhm (operator ruling 2026-11-13, chat: "Keep 27.4k"): the note binds only below 9 V, during the UVLO falling band, where CHG_IIN is not used; a 10.0 kOhm 0603 in the parts order allows a swap at assembly. (**Superseded 2026-11-13:** "TODO(verify: Toshiba) Table 10.1 Note 13.")
@@ -1698,7 +1919,9 @@ D-67 and export again.
 
 **D-68. AGND pours keep 0.5 mm from the EIB E lead pads (operator ruling 2026-11-13, chat: "Widen clearance").** The pre-order review
 (`bom_2026-11-13/PREORDER_REVIEW.md` item 3.2.1, finding EIB-4) found that the E pads carrying hand-soldered leads (E1, E2,
-E3, E5, E7) kept only the 0.20 mm zone clearance to the AGND pours on both layers (the F.Cu pour is D-63), with a 0.05 mm
+E3, E5, E7) kept only the zone clearance to the AGND pours on both layers (0.1524 mm as filled; **superseded
+2026-11-14, D-70:** "the 0.20 mm zone clearance"; the zones declare 0.2 mm, but the fill follows the 0.1524 mm
+`fab_clearance` rule) (the F.Cu pour is D-63), with a 0.05 mm
 mask expansion, so a solder blob or flux residue could bridge a lead to AGND. A custom rule now holds the pours 0.5 mm
 from any pad of an E footprint on another net (`eib_E_pad_pour_clearance`; E8 is AGND and keeps its connection). The rule
 applies to zones only, so tracks and every other spacing keep the fab rule file. It is in `eib/eib.kicad_dru`, and
@@ -1713,6 +1936,772 @@ file differ. Reversal: restore `eib/eib.kicad_pcb`, `eib/eib.kicad_dru` and `gen
 D-68 and export again.
 
 **D-69. Stencils: 4 mil stainless from OSH Stencils, and U101 exposed-pad paste windows at about 55 % coverage (operator rulings 2026-11-13, chat: "I would order from OSH Stencil" and "Yes, do both").** Both boards are top-side only (no B.Paste). The stencil is 4 mil (0.1 mm) stainless steel, one frameless stencil per board in one order: OSH Stencils prices by area per material and combines the stencils of an order for the discount, so one shared sheet would save only the border between the designs. The smallest paste apertures set the thickness. U101 pins (0.25 x 0.825 mm) give an area ratio of 0.96 at 4 mil and 0.76 at 5 mil; the EIB U202 SC-70 pads give 1.24 and 0.98; IPC-7525 asks at least 0.66. OSH Stencils states 0.001" minimum aperture and 0.0007" laser spot for stainless steel, and limits polyimide to a few uses and parts 0402 or larger. The D-56 window-pane apertures (four 0.675 mm squares, 25.0 %) gave too little paste under the U101 exposed pad at 4 mil. `gen/fplib.py` (vqfn24) now makes each quadrant aperture a polygon: the square from the 0.125 mm half-web to 0.05 mm inside the 2.7 mm pad edge, minus a 0.31 mm keep-out circle around each of the nine via centres. Measured on the board (`cr/constraint_check.md`): 4 apertures, 54.6 % coverage, smallest gap to a via drill 0.160 mm (D-56 asks 0.15 mm), web 0.25 mm. `gen/u101_paste_swap.py` replaced the four paste-only pads of U101 on the board; pins, nets and copper are unchanged (`gen/pcbdiff.py`: 0 differences). DRC (`--severity-all --schematic-parity`) gives 0 / 0 / 0 and the constraint check 108 pass and 0 FAIL; the check now measures the aperture polygons instead of their bounding boxes. Package `fab/cr_2026-11-13f/`; against `fab/cr_2026-11-13e/` only `cr-F_Paste.gtp` differs, so the OSH Park order may use either package, and the stencil uses 13f. The solder paste is not identified (a Type 4 paste is the usual choice for 0.5 mm pitch). Reversal: restore `gen/fplib.py`, the U101 library footprint and `cr/cr.kicad_pcb` from the commit before D-69 and export again.
+
+**D-70. AGND pour clearance of 0.5 mm extended to the EIB J201 wire pads (2026-11-14, REVIEW EIL-0).**
+
+- Decision: the D-68 zone-only rule `eib_E_pad_pour_clearance` also covers J201. Its condition is now `A.Type ==
+  'Zone' && (B.memberOfFootprint('E*') || B.memberOfFootprint('J201'))`, in `gen/eib_pour_rules.kicad_dru` and
+  `eib/eib.kicad_dru`. All zones were refilled with the board beside its own `.kicad_pro` and `.kicad_dru`.
+- Reason: the nine W5 wires are hand-soldered into J201 (D-66), the same joint type as the E leads of D-68. Before the
+  change, J201 pad 1 was 0.1529 mm and pads 2 to 10 were 0.1572 mm from the AGND pours on F.Cu and B.Cu.
+- Result: the smallest J201 gap is 0.5005 mm on both layers, and the E pads stay at 0.5007 mm. On F.Cu, the AGND
+  island of 434.74 mm² (38 vias) splits into 264.90 mm² (22 AGND vias) and 147.96 mm² (15 AGND vias). A new 0.95 mm²
+  island left of J201 column 1 holds one AGND via. On B.Cu the island count stays 5, and the areas fall by at most
+  10.8 mm². Every new or changed island holds at least one AGND stitching via. DRC reports no unconnected item and no
+  dangling via.
+- Correction: both AGND zones declare a 0.2 mm local clearance, but the fill follows the 0.1524 mm `fab_clearance`
+  rule of the 2-layer rule file. The pre-change J201 gaps agree with 0.1524 mm. D-28 and D-68 are corrected in place.
+- Regeneration: `gen/make_board.sh` appends `gen/eib_pour_rules.kicad_dru`, which now holds the extended condition, so
+  a regeneration keeps the rule; the zones must then be refilled. On a board kept in place, run
+  `gen/eib_j201_pour_clearance.py` (idempotent; step 1 of the EIB order in section 2).
+- Evidence: `update_2026-11-14/notes_eib.md` section 2.1 (pcbnew distance script over the filled polygons;
+  `gen/pcbdiff.py`: 0 tracks and 0 vias changed, two zones changed in fill only).
+- Reversal: restore the two rule files from `014c745` and refill the zones.
+
+**D-71. No solder paste on the EIB DNP pads (2026-11-14, REVIEW EIB-7, EIL-6, BOM-2).**
+
+- Decision: each of the 14 DNP footprints (C203, C204, E4, E6, R258-R265, U203, U204) carries a footprint-level
+  solder-paste margin of -2.0 mm. The margin exceeds half of every pad of these footprints, so KiCad plots no paste
+  aperture for them.
+- Reason: the F.Paste layer of `fab/eib_2026-11-13c/` has 94 flashes, 32 of them on DNP pads (REVIEW EIL-6). Removing
+  F.Paste from the pad layer sets gave 12 `lib_footprint_mismatch` warnings in DRC. The footprint-level margin is not
+  part of that comparison, so DRC stays at 0.
+- Result: an F.Paste Gerber exported to scratch has 62 flashes, 0 apertures on DNP pads and 0 fitted SMD pads without
+  an aperture. B.Paste has 0 flashes. Copper, mask, nets and fields are unchanged.
+- Regeneration: DNP is a per-instance build choice (D-49), so the library and `gen/fplib.py` do not change.
+  `gen/pcbbuild.py` does not reproduce the margin; re-run `gen/eib_dnp_paste.py` after any EIB regeneration.
+- Evidence: `update_2026-11-14/notes_eib.md` section 2.2. The EIB package README (`gen/fab_readme.py`) and the EIB
+  stencil row of `bom_2026-11-14/eib_bom.csv` (BOM-1, BOM-2; D-83) state the result.
+- Reversal: run `gen/eib_dnp_paste.py` with a zero margin, or restore `eib/eib.kicad_pcb` from `014c745`.
+
+**D-72. Pin-1 dots and SMA cathode bars on the silkscreen (2026-11-14, REVIEW CRL-3, INT-5, EIL-2): an exception to
+D-12a.**
+
+- Decision: a filled F.Silkscreen dot (radius 0.10 mm, stroke 0.15 mm, outer diameter 0.35 mm) sits off the outer
+  corner of pad 1. On the EIB it marks U201 (DCT SSOP-8), U202 (DCK SC70-5), Q201-Q203 (SOT-23), U203 and U204
+  (SOT-23-6). On the CR it marks U101 (VQFN-24), D104-D106 (SOT-23), U102, U103, U107, U119, U120 (SOT-23-6) and U105,
+  U106, U110, U118 (DCT SSOP-8). D103 and D107 (SMA) carry a 0.15 mm cathode bar, 1.8 mm long, beyond pad 1, which is
+  the cathode of both diodes (D103 pad 1 /VCHGOUT, D107 pad 1 /VCHGIN).
+- Positions (footprint coordinates, mm): EIB `PIN1_DOT` SSOP-8 (-2.75, -1.45), SC70-5 (-1.75, -1.15), SOT-23 (-1.9,
+  -1.5), SOT-23-6 (-2.0, -1.5). CR `PIN1_DOT_CR` SOT-23 (-1.9, -1.5), SOT-23-6 (-1.55, -1.55), SSOP-8 (-2.75, -1.35),
+  VQFN-24 (-2.4, -2.4); `CATHODE_BAR_CR` at x -3.45, y -0.9 to 0.9. The shared SOT-23-6 position put the dot over a
+  tented via drill at U102, U107 and U119, and the shared SSOP-8 position came within 0.018 mm of a via drill at U110;
+  a search over every CR instance chose the CR positions.
+- Library: `gen/fplib.py` gained `_pin1_dot()`, `PIN1_DOT`, `_pin1()`, `PIN1_DOT_CR`, `CATHODE_BAR_CR` and
+  `_cathode_bar()`. Four EIB and five CR library footprints were written from `gen/fplib.py`; each differs from git
+  HEAD by the one mark line. The board instances carry the same mark, so DRC reports no library mismatch. The EIB
+  footprints regenerated with `BOARD = "eib"` are line-identical before and after the CR change.
+- Result: no mark overlaps a via drill; several overlap a tented via ring under the mask. Gaps to the nearest mask
+  opening are 0.156-0.181 mm on the EIB and 0.07-0.80 mm on the CR (`update_2026-11-14/notes_cr.md` section 2.2
+  table). The EIB U203 (DNP) and Q203 dots are 0.98 mm apart and stay: the SOT-23 land of Q203 admits one orientation
+  only (`update_2026-11-14/notes_phaseB_silk_eib.md` section 3.2).
+- Regeneration: a library regeneration with `gen/fplib.py` reproduces the marks, and `gen/pcbbuild.py` places them
+  with the footprints. On a board kept in place, run `gen/cr_pin1_marks.py` and `gen/eib_pin1_marks.py` first in their
+  sequences (section 2). A change of a mark position is made in `gen/fplib.py` and needs a clearance check on both
+  boards.
+- Reversal: restore `gen/fplib.py`, the nine library footprints and the two boards from `014c745`.
+
+**D-73. Wire-pad maps and lead labels (2026-11-14, REVIEW INT-2, EIL-1, INT-5).**
+
+- Decision: the J101 and J201 pads have 0.74 mm gaps and no room for labels beside them, so each board carries a
+  F.Silkscreen map of its 3 x 3 wire-pad grid, top view. Each cell reads "pin net". The cells are built from the pads
+  and nets of the board, so they agree with `cr/cr.net`, `eib/eib.net` and Table D-66. Short names: 3V3 = /J3V3_1 and
+  /J3V3_2 (CR) or /3V3 (EIB), GND = /GND (CR) or /GND_J (EIB), STAT = /STAT, CE = /CE_DRV_J, RLA = /ILIM_REL_A, RLB =
+  /ILIM_REL_B, RFC = /RFC_OFF_J. Text is 0.8 mm high with a 0.15 mm stroke.
+- CR J101 map: in the strip right of the J1 pin column, x 47.70-58.30 mm, each row level with its pad row (y 50.63,
+  53.17 and 55.71 mm), between the rows of /GND stitching vias. Its header "J101 top view" and a separator line are
+  D-78. Rows (top view): 1 3V3, 3 GND, 2 3V3 / 5 CE, 7 RLA, 4 STAT / 9 GND, 8 RLB, 10 RFC.
+- EIB J201 map: above the board marking, ink box x 8.16-22.70 mm, y 43.14-48.18 mm, header "J201 top view", two 0.15
+  mm separator lines. Rows (top view): 1 3V3, 4 STAT, 8 RLB / 5 CE, 2 3V3, 3 GND / 7 RLA, 10 RFC, 9 GND. The two maps
+  differ by design (Table D-66).
+- CR lead labels: the W3 reference moves from F.Fab to F.Silkscreen at (22.50, 54.50) mm. W6 carries "TS" (pad 1,
+  TS_EXT) and "GND" (pad 2); W7 carries "SDA" (pad 3), "GND" (pad 2) and "SCL" (pad 1), each on the +x side of its
+  hole. The W7 reference moves to (53.51, 44.13) mm. W1, W2 and W4 are unchanged.
+- EIB E labels (B.Silkscreen): E8 TP49, E3 TP33, E4 DNP, E2 JP14, E7 TP38, E1 JP12, E5 TP36 and E6 DNP, from the A.5
+  wiring table of the design document (E4 and E6 carry no lead, r9-2).
+- Scripts: `gen/cr_wire_labels.py`, `gen/cr_lead_labels.py`, `gen/eib_wire_labels.py` (idempotent; section 2 gives the
+  order). `gen/cr_wire_labels.py` also removes the D-78 header text and separator in its idempotency step, so a re-run
+  must be followed by `gen/cr_silk_fix_r3.py`.
+- Open: the W6 "GND" label is 0.086 mm from a mask opening; it was placed under the phase A 0.05 mm rule and passes
+  DRC, but it misses the 0.10 mm phase B rule (operator question). The W3 reference overlaps the courtyard ring of a
+  J1 post by about 0.2 mm; TODO(verify: assembled board) whether the post hides it. **Amended 2026-11-16 (D-95):**
+  the W6 label half is closed; the operator accepted the label as placed. The W3 half stays open as an inspection
+  step on the assembled CR.
+- Evidence: `update_2026-11-14/notes_cr.md` sections 2.1 and 2.4, `update_2026-11-14/notes_eib.md` section 2.5,
+  `update_2026-11-14/notes_phaseB_silk_cr.md` section 5. DRC 0 / 0 / 0.
+- Reversal: delete the map and label texts, or restore the boards from `014c745`.
+
+**D-74. Reference designators re-placed and the EIB board marking (2026-11-14, phase A; REVIEW CRL-7, EIL-2, EIL-7).**
+
+- CR: the R107 reference lay inside the J102 body outline and was hidden once J102 is fitted. No unambiguous top-side
+  position exists within 4 mm of R107, so the reference is on B.Silkscreen, mirrored, 1.0 x 1.0 mm, over R107 at
+  (42.63, 62.25) mm. The C102c reference left the U101 pin-1 corner; D-78 then moved it to the bottom side.
+  `gen/cr_silk_refs_r2.py` makes both changes.
+- EIB: `gen/eib_silk_refs_r2.py` re-placed every C, R, Q and U reference and J201 under an unambiguity rule: the gap
+  to every other courtyard is at least max(2 x d_own, d_own + 0.15 mm), with DNP footprints counted as other parts.
+  D-78 tightened the rules.
+- EIB board marking: the two texts "EIB r8" and "2026-11-11" became one text "EIB r8 2026-11-14", 0.8 mm high with a
+  0.15 mm stroke (`gen/eib_board_marking.py`). D-78 moved it clear of the H1 keep-out.
+- Evidence: `update_2026-11-14/notes_cr.md` section 2.3, `update_2026-11-14/notes_eib.md` sections 2.4 and 2.6.
+- Reversal: restore the boards from `014c745`.
+
+**D-75. J1 pin 18 joins the F.Cu VCHG pour solidly (2026-11-14, REVIEW CRL-4).**
+
+- Decision: the board rule `cr_J1_pin18_solid` in `cr/cr.kicad_dru` (condition `A.Type == 'Pad' &&
+  A.memberOfFootprint('J1') && A.Pad_Number == '18'`, constraint `zone_connection solid`). A rule keeps the J1
+  instance equal to its library footprint, so `gen/fplib.py` does not change. Pin 19 and W3 keep their thermal
+  reliefs.
+- Reason: VCHG has no inner-layer copper, so the whole pin-18 current crosses the F.Cu connection to the VCHG_L1 pour.
+  The basis is 3.21 A battery-side current shared 60/40 by pins 18 and 19, that is 1.93 A per pin, and A.8 asks for
+  VCHG copper at least 2.0 mm wide on 1 oz (design document A.8 and H.22). With thermal reliefs, two diagonal 0.6 mm
+  spokes reached pin 18: 1.22 mm of copper on a ring of radius 1.10 mm (pin 19: 2.43 mm).
+- IPC-2152 figures (baseline fit `ipc2152_area_mil2` of `r9_calc.py`, 35 um clad only, long-conductor basis;
+  `update_2026-11-14/notes_cr.md` section 2.5): before, 1.22 mm = 66.2 mil² carries 2.09 A at a 10 C rise, with a rise
+  of 8.3 C at 1.93 A and 27.7 C at 3.21 A (pin 19 open or a poor joint). After, 4.07 mm = 220.8 mil² gives 2.1 C at
+  1.93 A and 6.6 C at 3.21 A.
+- Result: the VCHG_L1 fill grows from 12.489 to 15.220 mm², and GND_L1_fill shrinks from 1499.920 to 1499.684 mm². A
+  control refill without the rule changed no zone. The constraint rows are unchanged, except that six D-56 escape rows
+  report 0.13 mm² less free area (all pass).
+- Assembly consequence: pin 18 is a TSW post soldered from the top side. The solid joint heats the whole F.Cu VCHG
+  pour, so it needs a higher iron setting or a larger tip and a longer dwell than pin 19 or W3.
+- Regeneration: `gen/make_board.sh` copies `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru` over
+  `cr/cr.kicad_dru`, so `cr/cr.kicad_dru` no longer equals the fab rule file. After any regeneration, run
+  `gen/cr_j1_pin18_solid.py`; it adds the rule and refills the 16 zones.
+- Reversal: delete the rule from `cr/cr.kicad_dru` and refill the zones.
+
+**D-76. Stack-up blocks in both boards (2026-11-14, REVIEW CRL-6).**
+
+- CR: the `(setup)` section holds the OSH Park standard 4-layer stack (docs.oshpark.com/services/four-layer/, read
+  2026-11-15): outer copper 0.0432 mm finished (1 oz clad and plated), inner copper 0.0175 mm (0.5 oz clad), L1-L2 and
+  L3-L4 prepreg FR408HR 2113 0.1999 mm with Dk 3.61 at 1 GHz, L2-L3 core FR408HR 0.9906 mm, purple PSR-4000BN mask
+  0.0152 mm on both sides, white silkscreen, ENIG. The layers sum to 1.542 mm against the 1.6 mm nominal; the board
+  thickness stays 1.6 mm. OSH Park states no loss tangent, so the KiCad default 0.02 stays.
+- EIB: the OSH Park 2-layer stack (docs.oshpark.com/services/two-layer/, read 2026-11-14): copper 0.035 mm, FR4 core
+  1.51 mm (derived so that the stack sums to 1.6 mm; Dk 4.5 at 10 MHz), purple mask 0.01 mm (KiCad default), white
+  silkscreen, ENIG.
+- Copper note: the IPC-2152 figures of D-75 and of R9.H26 count only the 35 um clad. The finished outer copper is
+  0.0432 mm, so those figures are conservative.
+- Scripts: `gen/cr_stackup.py`, `gen/eib_stackup.py`. The pcbnew API of this build has no BOARD_STACKUP access, so
+  each script writes the block as text and normalizes it by a pcbnew load and save. The generator does not write the
+  block; re-run the scripts after any regeneration.
+- Evidence: Gerber job files exported to scratch read the thickness, finish, mask colour, legend and the layer
+  thicknesses above (`update_2026-11-14/notes_cr.md` section 2.6, `update_2026-11-14/notes_eib.md` section 2.7).
+
+**D-77. NPTH check gate in the export (2026-11-14, REVIEW CRL-8).**
+
+- Decision: `gen/npth_check.py` measures, for every NPTH pad on every copper layer, the gap from the hole edge to the
+  nearest copper (pads, tracks, vias, zone fills). Copper on the hole fails; a gap below 0.254 mm is a warning.
+  `gen/export.sh` runs it after DRC and writes `reports/npth_check.txt`; with `set -e`, a failure stops the export.
+- Reason: OSH Park decides plating from the copper under a drill (docs.oshpark.com, DipTrace plated-vias page, read
+  2026-11-14). The KiKit OSH Park preset writes one MixedPlating drill file, which is acceptable only when no copper
+  lies on an NPTH hole. The `drill/` folder keeps separate PTH and NPTH files for other fabs.
+- Result: EIB H1 and H2 (3.2 mm): nearest copper 1.896 mm and 1.893 mm, pass. CR: 6 NPTH holes, pass; the J102 pegs
+  (1.02 mm) have 0.254 mm to the GND zones on F.Cu, In1.Cu and B.Cu (equal to the warning threshold) and 0.319-0.344
+  mm on In2.Cu; MH1-MH4 (3.70 mm) have 2.131-2.201 mm.
+- Evidence: `update_2026-11-14/notes_eib.md` section 2.8, `update_2026-11-14/notes_cr.md` section 2.7.
+
+**D-78. Silkscreen fixes after the independent check of phase A (2026-11-14, phase B; defects D1 to D4).**
+
+- EIB board marking (D1): at (12.0, 49.05) mm the marking reached 3.11 mm from the H1 centre, inside the 3.55 mm
+  keep-out, and its strokes lay over two via drills. It is now at (14.18, 49.15) mm: ink x 8.07-20.37 mm, y
+  48.60-49.59 mm, 5.03 mm from the H1 centre. The bottom row has via drills at x 6.21, 11.96, 16.46 and 23.21 mm, so
+  no via-free span of 12.3 mm exists; the position has the largest stroke-to-drill gap of a 0.01 mm search, 0.045 mm.
+  `gen/eib_board_marking.py` asserts the hole, edge, map and drill rules on every run.
+- CR C102c reference (D2): its ink ended 0.14 mm above the D107 cathode bar, so the bar read as its underline. No
+  top-side position exists, even with relaxed rules. The reference is on B.Silkscreen, mirrored, at (42.23, 39.71) mm,
+  1.0 x 1.0 mm.
+- CR J101 header and separator (D3): the header reads "J101 top view" (the J101 reference field plus a "top view"
+  text, 0.8 mm high, 0.6 mm character width). A 0.15 mm vertical separator at x 47.349 mm, y 50.16-56.19 mm divides
+  the J1 pin column from the map, 0.275 mm from the J1 mask openings and 0.276 mm from the map texts.
+- CR references over another courtyard (phase A check): R176 stays on F.Silkscreen at (34.11, 48.08) mm, 0.35 mm from
+  the nearest other courtyard. C102a, C119, U119, C131 and U107 move to B.Silkscreen, mirrored, over their parts, with
+  0.0 mm² overlap with other courtyards.
+- CR board marking: the CR carried none. "CR r8 2026-11-14" is on F.Silkscreen at (44.83, 85.61) mm below J102, 0.8 mm
+  text, 0.15 mm stroke, 0.23 mm from the nearest obstacle.
+- CR rules for every moved or new text: height at least 0.8 mm, stroke 0.15 mm; ink at least 0.10 mm from mask
+  openings, 0.15 mm from holes, 0.05 mm from via drills, 0.30 mm from silkscreen graphics, 0.10 mm from other texts
+  and 0.25 mm inside the edge; no overlap with another courtyard or the own F.Fab body.
+- EIB references (D4): `gen/eib_silk_refs_r2.py` gained a 0.10 mm mask gap (was 0.05 mm), no stroke over a via drill,
+  a spread pass and an orphan rule. A reference whose text centre lies nearer an unlabelled fitted part than its own
+  part leaves the top side. Result: 18 of the 26 fitted references are on the top side (phase A: 22). C201, C202,
+  R251, R252, R254, R271, U201 and U202 have mirrored B.Silkscreen texts and F.Fab references. R253 and R273 now have
+  0.89 mm between their inks (was 0.29 mm). **Amended 2026-11-16 (D-95):** R252 breaks no phase B rule at its phase
+  A position. It leaves the top side because the search orders by candidate count and never offers the space again
+  after the orphan rule removes U202.
+- Operator question: the stricter EIB rule set is applied. The phase A rule set (22 fitted on top, 15 references
+  within 0.10 mm of a mask opening, 5 over a via drill) is restored through `MASK_GAP`, `DRILL_HARD` and the
+  `orphan_check()` call of `gen/eib_silk_refs_r2.py`. **Amended 2026-11-16 (D-95):** the operator kept the phase B
+  rule set ("I accept keeping it the way it is"); the question is closed.
+- Bottom-side references: 7 on the CR (C102a, C102c, C119, C131, R107, U107, U119) and 8 on the EIB. They can be read
+  only before the CR is plugged onto the MB and before the EIB is mounted. The assembly instructions must state this.
+- Map ownership (fix round 2026-11-15, check1 issue 12): the CR map headed "J101 top view" belongs to J101, the
+  W5 wire-pad grid. It stands in the strip right of the J1 pin column (D-73) because no space exists beside J101.
+  Its cells name J101 pads and nets only, never J1 pins.
+- Exception: the CR W6 "GND" label (`gen/cr_lead_labels.py`) is 0.086 mm from a F.Mask opening. It was placed with
+  the phase A 0.05 mm margin, not with the 0.10 mm rule above, and it passes DRC
+  (`update_2026-11-14/notes_phaseB_silk_cr.md` section 4 item 4). It stays as placed by operator ruling (D-95). Its
+  strokes also lie over the drill of the tented /GND via at (25.392, 39.097) (`update_2026-11-14/notes_cr.md` line
+  143), and its ink box is 0.0045 mm from the W2 courtyard line. The CR text rules above formally cover only texts
+  moved or added in phase B; the W6 label is a D-73 text. (**Superseded 2026-11-16, D-95:** "It stays until the
+  operator rules on a further silkscreen pass.")
+- Residual observations (check1 issue 12, no DRC item): the W3 reference overlaps the J1 courtyard by about 0.2 mm;
+  tented vias lie under "U106", under "r8" of the EIB marking and under the EIB bottom E labels. A further
+  silkscreen pass is an operator question. **Amended 2026-11-16 (D-95):** the W6 "GND" label over a tented /GND via is
+  an observation of the same kind. The operator ruled no further pass for the W6 label and the EIB references; the
+  W3/J1 check stays open as an inspection step on the assembled CR (section 11 item 29).
+- Open: stroke-to-drill gaps of 0.003 mm (R258), 0.006 mm (R253), 0.023 mm (C204), 0.045 mm (EIB marking) and 0.054 mm
+  (U202, bottom). TODO(verify: OSH Park silkscreen registration tolerance). The vias are tented, so an overlap clips a
+  stroke edge only.
+- Scripts: new `gen/cr_silk_fix_r3.py` and `gen/cr_silk_refs_report.py` (writes `cr/silk_refs.md`); changed
+  `gen/eib_board_marking.py`, `gen/eib_silk_refs_r2.py` and the idempotency step `mine()` of `gen/cr_wire_labels.py`.
+  Section 2 gives the run order.
+- Evidence: `update_2026-11-14/notes_phaseB_silk_cr.md` and `update_2026-11-14/notes_phaseB_silk_eib.md`: DRC 0 / 0 /
+  0, constraint checks identical, `gen/pcbdiff.py` against the phase A boards 0 segments, vias and zones changed,
+  kicad-cli 3-D renders of both sides inspected.
+- Reversal: restore the reference fields and texts from the phase A boards or from `014c745`.
+
+**D-79. D103 stays the ordered STPS2H100A; the onsemi MBRA2H100T3G is an order alternate (2026-11-14, REVIEW PWR-0,
+sim 1).**
+
+- Decision: D103 stays STMicroelectronics STPS2H100A (`bom_2026-11-13/cr_bom.csv` line 11). The swap to the onsemi
+  MBRA2H100T3G is an operator question. The opt-in file `bom_2026-11-14/digikey_optional.csv` carries it as a
+  labelled alternate line (MBRA2H100T3GOSCT-ND, D-83): BOM quantity 2 for a test fit on two CRs, order quantity 3
+  (the D103 decision recommends 2 to 3 parts). (**Superseded 2026-11-14, fix round 2026-11-15:**
+  "`bom_2026-11-14/digikey_import.csv` carries it as a labelled alternate line"; that line ordered 8 parts for a
+  BOM quantity of 6.)
+- Fit: the MBRA2H100T3G fits the existing `D_SMA_CrtYd0.25` land. onsemi CASE 403D Issue J (98AON04079D) gives HE
+  4.83-5.59 mm, lead width 1.27-1.63 mm and L 0.76-1.52 mm, so the leads span |x| 0.895-2.795 mm. The board pads are
+  2.5 x 1.8 mm at x = +-2.0 mm and cover |x| 0.75-3.25 mm. Style 1 has pin 1 = cathode, which matches pad 1 = /VCHGOUT
+  = K (`cr/cr.net`).
+- Criteria (design document B.4 D103 row and T-A-05): the alternate meets the voltage, SMA, IR and IFSM criteria (IFSM
+  130 A against 75 A; onsemi MBRS2H100/D Rev. 16 p.2). It fails the T-A-05 limit "VF at 3 A <= 0.5 V" (about 0.82 V
+  from Fig. 2), as the STPS2H100A also does. Neither datasheet gives a pulse rating for criterion (4), 130 A for at
+  most 1 us.
+- Simulation (`sim/hardshort/RESULTS.md` rev 2, sections 5.1 and 6): with any D103, U101 OUT reaches -3.8 to -7.8 V
+  and stays below -0.3 V for 2.9-11.2 us. The alternate gives a 1.2-1.3 V shallower minimum and a plateau of -1.44 V
+  against -2.69 V. However, it keeps OUT below -0.3 V longer (8.9 us against 7.8 us nominal), and its IR maximum at
+  125 C is 1.5 mA against 1 mA. No SMA Schottky holds OUT above -0.3 V.
+- Consequence for the test order: run T-C-04 step (2) last, or replace it by the 2 ohm fast-trip short of sim 1
+  section 6 item 2. Design revisions r9-25 and r9-26 restated J.1 item 5 from sim 1 and superseded its TPS26630
+  statements; the T-C-04 repetitions on the only U101 are design J.2 item 84 (section 11 item 42). (**Superseded
+  2026-11-15, REVIEW R2-DOC-14:** "The acceptance basis of J.1 item 5 still cites TI guidance for the TPS26630; a
+  Toshiba statement or the T-C-04 survival result must replace it (design-document change, outside this log).")
+- Open: TODO(verify: onsemi / ST pulse rating) for criterion (4); the T-A-05 "VF at 3 A" limit needs an operator
+  restatement; the STPS2H100A IR at 24.4 V / 60 C is not tabulated.
+
+**D-80. R130 and R131A stay 100 ohm (2026-11-14, REVIEW INT-0, EIB-0, EIB-1, sim 4).**
+
+- Decision: R130 and R131A stay 100 ohm; the BOM, the netlist and the copper do not change. The `gen/netlist.py`
+  comment records that the H.24(d) reason "conductor 7 has no GND neighbour" is void under D-66.
+- Reason: D-66 puts CE_DRV_J (pad 5) and ILIM_REL_A (pad 7) next to GND pads on the CR grid. A single bridge on CR 5-9
+  or 7-3 pulls the CR rail to 1.97-2.36 V (`sim/permit/RESULTS.md` section 5.8). A value inside the H.24(d) window
+  (3.16-10.5 kOhm) restores the rail (at least 3.03 V at 4.99 kOhm in a scratch re-run of the sim 4 decks). It does
+  not stop a 3V3-CE_DRV_J bridge from forcing /CE LOW with P5 LOW. It makes the STAT-CE_DRV_J wire short, the CR 7-4
+  bridge and the EIB 7-10 bridge undefined at the LVC inputs, and it slows the edges to 166 ns/V at 60.7 pF. No E96
+  value passes every case.
+- Mitigation: the staged T-A-06 metering of design r9-26 (bare-board references and a post-wire table), or a grid
+  reorder (a copper change on both boards). Both are operator questions; sim 4 names CR 5-9, 7-3, 1-5, 1-3 and EIB
+  1-5, 2-5, 2-10, 2-3, and the decision study adds CR/EIB 5-7 in qualification and EIB 7-10 in an FC window.
+  (**Superseded 2026-11-16, design r9-26:** "a post-solder isolation check of every orthogonal J101 and J201 pad pair,
+  or a grid reorder (a copper change on both boards)".)
+- Open: the sim 4 bridge list misses the qualification state and the pairs CR 7-4, 3-2, 8-10, 2-4, 4-10 and EIB 7-10,
+  1-4, 4-8, 4-2, 8-3. The design-document B.3 claim of at most 10 ns/V at every LVC input does not hold for the
+  existing 4.99 kOhm R131B and R132 paths; TODO(verify: SN74LVC3G06 / SN74LVC1G06 recommended operating conditions,
+  delta-t/delta-v).
+- **Addendum 2026-11-16 (W5 grid deep-dive with independent checks; ruled the same day, see the ruling bullet after
+  this addendum).** When the addendum was written, section 11 item 31 and design J.2 item 76 stayed open.
+  (**Superseded 2026-11-16, D-80 ruling:** "not ruled" in this heading, and "Section 11 item 31 and design J.2 item 76
+  stay open.") The findings below are information for that ruling; the T-A-06 procedure text does not change.
+  - Pad form: the J101 and J201 pads are plated through-holes (D-66 footprint), 1.0 mm drill and 1.8 mm pad on every
+    copper layer, pad 1 square, mask open on both sides. The 0.74 mm orthogonal gap (1.42-1.79 mm diagonal) lies
+    between the pad rings on both outer layers. A bridge or a stray strand can therefore form on the insertion side
+    and on the side where solder wicks through.
+  - Worst pair: CE_DRV_J to ILIM_REL_A (CR 5-7, EIB 5-7) during qualification. /CE is LOW in 6 of 8 corners while the
+    release is HIGH, so EN_CHG = 0 is the only remaining barrier.
+  - 3V3 to CE_DRV_J (CR 1-5, EIB 1-5, EIB 2-5) forces /CE LOW. The comparator-driven ILIM hold (Q201/Q203) and
+    EN_CHG = 0 remain. No pair damages a part: the worst driver current is 18.7 mA against the 50 mA absolute maximum.
+  - Copper near the grids that no earlier entry records: the CR /GND pour is 0.127 mm from every J101 signal pad (1,
+    2, 4, 5, 7, 8, 10) on F.Cu and B.Cu; REVIEW EIL-0 asked for the CR check, and D-70 widened the clearance on the
+    EIB only. The EIB nCE_DRV B.Cu track runs between the J201 pads, 0.245-0.29 mm from pads 1, 2, 3, 4, 9 and 10
+    (pad 10 nearest); GND_J onto it forces /CE LOW. A tented EIB /AGND via at (16.11, 34.16) is 0.286 mm from J201
+    pad 7 (ILIM_REL_A). The CR /J3V3_2 F.Cu track is 0.174 mm from J101 pads 4 and 10. A tented CR /GND via at
+    (36.605, 51.025) is 0.308 mm from J101 pad 1. All of this copper is under solder mask, so a bridge needs a mask
+    breach.
+  - Reorder: a search of all 362 880 orders finds none that makes every orthogonal pair benign. The 96 best orders
+    keep 4-6 rail-sag pairs and put GND next to CE_DRV_J or ILIM_REL_A. A reorder leaves the masked-copper paths and
+    the diagonals in place, and the post-solder test is still necessary.
+  - Meter readings: a correct T-A-06 reading on the 3V3, GND and 100 ohm driver pairs can be a few hundred ohms in one
+    meter polarity, because the path contains one junction. A hard bridge still reads near 0 ohm.
+  - Detection at first power: T-C-13 detects the 3V3-CE_DRV_J class. R108 holds CHG_ARM LOW, so the bridge draws
+    9.8-12.3 mA against at most 1.82 mA expected. A 3V3-GND bridge draws about 18-21 mA, at the 20 mA limit.
+  - Candidate mitigations, none taken: (A+) extra power-off readings (CR 2-10, 4-9 and 10-9; EIB E5 nCE_DRV to J201
+    pads 1, 2, 3, 4, 9 and 10; J201 pad 7 to AGND; the unsafe diagonals); pre-tin each wire end and trim it flush;
+    one T-C-01 truth-table pass with W5 fitted, read on the EIB side too (U201/U202 inputs, E5, the Q201/Q202/Q203
+    gates, STAT); a D-70-style 0.5 mm J101 pour clearance on the CR. That last option is a fill change and a CR
+    re-export; the three J101 stitching vias then need a check for islands.
+- **Ruling 2026-11-16 (operator, chat: "Keep copper, meter"; design r9-29).** Option (a) is adopted: the copper of
+  both boards stays as packaged, and the staged T-A-06 metering of design r9-26 is the W5 single-bridge mitigation.
+  The grid reorder is declined. Section 11 item 31 and design J.2 item 76 are closed.
+  - Scope: the T-A-06 procedure text does not change. The candidate mitigations of the addendum (the A+ readings, the
+    pre-tin and flush-trim rule, the T-C-01 pass with W5 fitted) are not part of the ruling. The CR J101 pour
+    clearance is a fill change and a CR re-export, so the ruling declines it with the reorder.
+  - Basis: no grid order makes every orthogonal pair benign, a reorder leaves the masked-copper paths and the
+    diagonals in place, and the post-solder test is necessary under either option. Every bridge outcome is
+    current-limited and damages no part.
+  - Residual risk: a bridge or a strand that forms in service, after T-A-06, is not covered by a one-time test. A
+    bridge to masked copper needs a mask breach first. T-C-13 detects the 3V3-CE_DRV_J class at first power. The 10 %
+    band of the T-A-06 pass criteria stays TODO(calibrate: T-A-06 first build).
+  - Reversal: a reorder is a copper change on both boards and a re-export of both fab packages. If the reorder is
+    taken in a later re-spin, re-route /CHG_ARM out of the D-36 zone in the same edit (D-94).
+
+**D-81. C106, C107 and C108 stay; C108 = 470 pF is an assembly option (2026-11-14, sim 4 T2 race, sim 3).**
+
+- Decision: C106 = C107 = 470 pF (GRM1885C1H471JA01D) and C108 = 1.0 nF (GRM1885C1H102JA01D) stay (`gen/netlist.py`).
+  C108 = 470 pF, the C106/C107 part, is an option at assembly; the opt-in file `bom_2026-11-14/digikey_optional.csv`
+  carries it as an alternate line (D-83). The 4.7 nF and 10 nF lines there are bench parts only. (**Superseded
+  2026-11-14, fix round 2026-11-15:** "`bom_2026-11-14/digikey_import.csv` carries it as an alternate line".)
+- Hazard: a scratch re-run of the sim 4 decks shows that a T2 tap interruption of 10-30 us lifts ILIM_HIZ above VIH
+  1.0 V while /CE is LOW. The peak is 1.26-1.48 V at 10 us and 1.63-1.77 V at 20 us, for up to 47.6 us. This occurs at
+  every corner with typical 2 us comparator delays. It is larger than the permanent-open case of sim 4 Table 5.4 (1.39
+  V, 28 us).
+- Options rejected: C106 = C107 = 4.7 nF or 10 nF removes the brief-open pulses but uses up the H.13 allowance that
+  T-B-06 (at most 150 us) must fit inside at 1.25 A and 1.80 A. C106 = C107 = 2.2 nF is worse than the present values
+  at 20 us. C107 = 4.7 nF alone is held until a simulation rules out a false H1 trip on the H.6 fast VBUS rise.
+- Option kept: C108 = 470 pF leaves the 10 us case unchanged (1.25-1.48 V), lowers the 20 us case to 0.51-1.05 V and
+  is never worse than 1.0 nF, reconnects included. If it is fitted, design-document B.2 (tau about 44 us), the shared
+  C108/C129 BOM line and companion-document C308 change.
+- Sim 3: the comparator results do not change the choice. The H1 fall worst case of 17.843 V against the VINDPM_STAGE1
+  minimum 17.84 V is a DC result and needs its own ruling (`sim/comparators/RESULTS.md` section 6 item 3). The VR-4
+  0.08 ratio is not needed for the TLV3012B (item 5).
+- Open: a T-D-04 bench step that applies T2 interruptions of 5, 10, 20 and 30 us (design T-D-04, r9-26);
+  TODO(verify: SLUSDV2C ILIM_HIZ deglitch and restart time). (**Superseded 2026-11-15, D-91:** "a formal sim 4
+  re-run with T2 interruptions of 2-40 us for every option (TODO(verify: sim/permit re-run)); a T-D-04 bench step
+  that applies a 10-20 us T2 interruption"; the re-run is sim 4 section 5.6a.)
+- **Amended 2026-11-15 (D-91; `sim/permit/RESULTS.md` section 5.6a, Tables 5.4a-5.4d):** the formal re-run replaces
+  the scratch figures of the Hazard bullet. As built, interruptions of 5-30 us are hazardous, worst 1.810 V and
+  50.7 us above VIH 1.0 V at 20 us (scratch: 10-30 us, up to 47.6 us). C108 = 470 pF narrows the band to 5-20 us
+  (1.545 V, 27.9 us). It is worse than as built in 49 of 576 matched decks, by at most 5.0 mV and 0.34 us, so the
+  "never worse" statement of the Option kept bullet holds only within those bounds. C107 = 4.7 nF alone trips H1
+  falsely on a VBUS rise of about 2.9 V or more at 12 V/ms from 0 V or 13.0 V. C106 = C107 = 4.7 nF or 10 nF move the
+  hazard to interruptions of 30 us or 50 us and longer, with a full release at 2.25 V for up to 0.48 ms or 1.23 ms,
+  and add 197-269 us or 340-598 us of H1 inhibit latency. The decision of this entry does not change; the option
+  choice is design J.2 item 77 (section 11 item 37).
+
+**D-82. Netlist fields synchronized with the ordered parts (2026-11-14, REVIEW PWR-5, LOG-5, EIB-3, EIL-5, BOM-11).**
+
+- Decision: `bom_2026-11-13/cr_bom.csv` and `eib_bom.csv` are the order set (the operator uploaded that list twice;
+  `bom_2026-11-13/README.md` section 4.2). `gen/netlist.py` now carries their values, MPNs and manufacturers. The pin
+  maps and footprints do not change. Table 2 of `update_2026-11-14/notes_phaseB_bom.md` lists every field.
+- Main changes: C101 C0603C223K5RACTU; C102a CL31B105KCHSFNE; C102b "4.7uF 100V X7R" CNC6P1X7R2A475K250AE; C103
+  CL21B105KBFNNNF; the CR and EIB 100 nF parts "100nF 100V X7R" GRM188R72A104KA35D; C125 "10uF 16V X7R"
+  CL21B106KOQNNNE; D103 "Schottky 100V 2A SMA" STPS2H100A; D104-D106 BAV199-7-F; D107 SMAJ33A; R102 ERA-6AEB8453V;
+  R109 ERA-6AEB4873V; R110 and R112 ERA-3AEB5622V; R115 RT0603BRD07104KL; U118 SN74LVC2G08IDCTRQ1; U202
+  SN74LVC1G06DCKT; Q201 and Q202 "2N7002BK" 2N7002BK,215. U102, U103, U119, U120 (and DNP U203, U204) carry the note
+  "B suffix required, no non-B substitute" (SBOS300C 9.4.4; `sim/comparators/RESULTS.md` section 5.6).
+- Method: `gen/sch.py`, ERC and the netlist export regenerated both schematics and netlists (ERC 0 errors and 0
+  warnings). Net membership is identical before and after (76 CR nets and 34 EIB nets with members; scratch
+  `netcmp.py`). `gen/sync_fields.py` (now with `wx.DisableAsserts()`, and clearing fields that the netlist no longer
+  carries) wrote 54 CR and 17 EIB fields. A line diff shows only Value, MPN, Manufacturer and Note property lines.
+- Result: DRC parity items before the sync, CR 13 and EIB 7, all value mismatches; after it 0 / 0 / 0 on both boards.
+  The constraint report is unchanged. Table D-53b gives the new netlist identity.
+- Regeneration: run `gen/sch.py`, ERC, the netlist export and `gen/sync_fields.py <board>.kicad_pcb <board>.net` for
+  each board after any `gen/netlist.py` change (section 2).
+- Open: TODO(verify: Nexperia 2N7002BK datasheet) Vgs(th) maximum; TODO(verify: Panasonic ERA-3A datasheet) the
+  resistance range for R103 (64.9 kOhm). The board footprints of U102, U103, U119, U120 and D103 have no Note field, so their notes
+  appear in the schematic, the netlist and the fab BOM only.
+- Note fields (fix round 2026-11-15, check1 issue 7): the board Note fields are not authoritative. `gen/netlist.py`,
+  the schematic and the netlist carry the Note text; `gen/sync_fields.py` updates only the fields that a footprint
+  already has, and the DRC parity check does not compare Note. The CR footprints D103, U102, U103, U119, U120 and
+  J101 and the EIB footprint J201 have no Note field on the board. Value, MPN, Manufacturer and DNP agree on all 78
+  CR and 46 EIB references (check1 section (b)).
+
+**D-83. BOM set regenerated as `bom_2026-11-14/` (2026-11-14, REVIEW BOM-0 to BOM-10, DOC-9).**
+
+- Decision: `gen/bom_split.py bom_2026-11-14` writes `cr_bom.csv`, `eib_bom.csv`, `system_bom.csv`,
+  `digikey_import.csv`, `digikey_optional.csv`, `mouser_import.csv` and `digikey_skipped.csv`;
+  `bom_2026-11-14/README.md` is written by hand.
+  `bom_2026-11-13/` stays unchanged as the record.
+- Generator changes: the MPN check accepts a netlist MPN equal to its `SUBST` target; each stencil row names its own
+  board, upload path and pitch, and the EIB stencil row states that the 14 DNP footprints have no aperture (BOM-1,
+  BOM-2); a `VMAX` table writes the rated voltage of the substitutes (BOM-3); `clean_notes()` removes stale
+  boilerplate (BOM-4); the PLT1M-C row counts ties (BOM-6); the U118, Q201/Q202 and TLV3012B notes are corrected
+  (BOM-8, BOM-9).
+- Order effect: the 62 main Digi-Key lines equal the 62 lines of `bom_2026-11-13/digikey_import.csv` in quantity, part
+  number, MPN and Customer Reference. Four labelled lines are in the opt-in file `digikey_optional.csv`: the D103
+  alternate (D-79), the C108 470 pF option (D-81) and the 4.7 nF and 10 nF bench parts (D-81). (**Superseded
+  2026-11-14, fix round 2026-11-15:** "Four labelled lines follow them". An opt-out line can reach the order
+  unnoticed, and the ALT C108 line has the part number 490-1443-1-ND of the C106/C107 main line, so a list upload
+  can merge the two lines into one line of quantity 20.) `bom_2026-11-14/README.md` section 4.1 instructs a fresh
+  Digi-Key list from `bom_2026-11-14/digikey_import.csv` (BOM-0); the uploaded 2026-11-13b list still holds the three
+  pre-D-67 resistors and the 2147561101 cable.
+- Packages: the stencil and PCB rows name `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`, written on 2026-11-15 by
+  `gen/export.sh` (**Superseded 2026-11-14, packages exported:** "which `gen/export.sh` writes next"). The PCB rows
+  state the copper state of each package and no longer carry "TODO(verify: package exported)". The README section 7 of that folder lists the superseded statements of `bom_2026-11-13/README.md` and
+  `bom_2026-11-13/PREORDER_REVIEW.md` (BOM-5, DOC-9).
+- Evidence: `update_2026-11-14/notes_phaseB_bom.md`; `bom_2026-11-14/README.md` sections 2 to 4.
+
+**D-84. EIB REGN track longer than the A.9 limit: deviation accepted (2026-11-14, REVIEW EIL-4).**
+
+- Finding: A.9 (design document, REGN parts row) asks for REGN traces of at most 10 mm. Along the /REGN track graph,
+  R252.2 is 13.55 mm from C205.1, and the net carries 19.19 mm of track in all. The other distances from C205.1 are
+  R276.2 2.61 mm, R271.2 2.81 mm, Q203.2 5.59 mm and R254.2 5.70 mm (REVIEW EIL-4 and its verifier note).
+- Decision: the deviation is accepted, and the copper does not change. The node is static: REGN feeds only the R252
+  47.0 kOhm pull-up to the Q201 gate and the other gate pull-ups, behind the R276/C205 low-pass. No dynamic current
+  flows on the long branch.
+- Open: `gen/check_constraints.py` has no REGN-length row; adding one is optional. Design revision r9-26 added the deviation note to the
+  A.9 REGN row (REVIEW R2-DOC-9) (**superseded 2026-11-15:** "The design-document A.9 row needs the deviation note
+  (design-document change, outside this log).").
+
+**D-85. CR input-pair labels (2026-11-15, phase C, REVIEW R2-INT-0).**
+
+- Finding: the W1 reference stood under the W2 (/GND) pad, 0.10 mm from it and 3.30 mm (centre to centre) from W1,
+  so the 20 AWG input pair could be swapped. A swap wires U101 VCHGOUT to EVM J1 pin 1 (PGND), which is the T-C-04
+  hard short at the first power-up: OUT -3.76 to -7.83 V for 2.93-11.16 us (`sim/hardshort/RESULTS.md` section 6).
+- Decision: `gen/cr_silk_fix_r4.py` adds "VIN1" level with W1 on its +x side (W1 goes to EVM J1 pin 2, VIN1), moves
+  the W1 reference beside W1 (32.35, 39.95), and adds "GND" under W2 (W2 goes to EVM J1 pin 1). "VIN1" names the EVM
+  pin, so it cannot be read as /VCHGIN. The ink of "VIN1" lies 0.12 mm from the W1 pad and 1.93 mm from any other
+  pad; "GND" lies 0.14 mm from W2 and 1.14 mm from any other pad. The texts follow the D-78 CR rules.
+- Evidence: `update_2026-11-14/notes_phaseC_board.md` section 3.1 and Table 3.1; a render check; DRC 0 / 0 / 0.
+- Regeneration: run `gen/cr_silk_fix_r4.py` after `gen/sync_fields.py` and before `gen/cr_silk_refs_report.py`
+  (section 2). The script is idempotent. Copper and footprint positions are unchanged.
+- Consequence: the W1/W2 meter identity check before soldering is in design PM4 (2b) and T-A-06 (r9-26).
+- Reversal: remove the two texts and restore the W1 reference position from the pre-phase-C board, then export again.
+
+**D-86. EIB E-pad identification (2026-11-15, phase C, REVIEW R2-INT-7, R2-EIL-0 to R2-EIL-2).**
+
+- Decision: `gen/eib_silk_fix_r3.py` adds an F.Silkscreen number beside every E pad: E8, E3, 4, E2, E7, E1, E5 and E6
+  ("E4" has no legal position). Each label lies nearer its own pad than any other pad by at least 0.15 mm, its ink
+  centre lies nearer its own pad row than any other E row by at least 0.5 mm, and it keeps 3.6 mm from the H1 and H2
+  centres. The full landing labels stay on B.Silkscreen. The E1 label reads "E1 JP12.1" (JP12 pin 1, the square REGN
+  post). The E2, E7 and E1 labels take 0.6 mm characters, and the E8 and E2 labels move toward +x, so every bottom E
+  label keeps 0.80 mm from the bottom references (was 0.41-0.53 mm). The E7 label still crosses the tented via at
+  (7.05, 28.95); no via-clear position exists. `gen/eib_wire_labels.py` names the E1 landing "JP12.1".
+- Evidence: `update_2026-11-14/notes_phaseC_board.md` sections 3.2 and 3.3; `eib/silk_refs.md` section 4 (hand-kept).
+- Regeneration: run `gen/eib_silk_fix_r3.py` last in the EIB order (section 2); it anchors the bottom labels on a
+  1 um grid and is idempotent. Copper and footprint positions are unchanged.
+- Reversal: remove the eight top texts and restore the bottom E labels from the pre-phase-C board, then export again.
+
+**D-87. Check and record corrections (2026-11-15, phase C, REVIEW R2-CRL-2 to R2-CRL-6, R2-EIL-3, R2-EIL-5).**
+
+- `cr/drc.rpt` (2026-11-15T05:29:19) and `eib/drc.rpt` (2026-11-15T05:36:57) are refreshed from the final boards: 0
+  violations, 0 unconnected pads and 0 footprint errors with schematic parity (R2-CRL-5, R2-EIL-5).
+- `gen/check_constraints.py`: the EIB A.9 outline row measures Edge.Cuts, 24.000 x 38.000 mm against 24.0 x 38.0 mm,
+  and passes (R2-EIL-3; the former "deviation D-25" row). A new CR row reports the D-36 metric on all layers: /CHG_ARM
+  has 5.25 mm of F.Cu track in the 2.0 mm zone, 0.224 mm from R114 pad 2 (/N_UVP); /SCL and /SDA have only their
+  D-35-exempt J1.7/J1.8 pads in the zone; no logic via lies in it (R2-CRL-3). The row reports and never fails; the
+  /CHG_ARM exemption is design J.2 item 83 (section 11 item 41), because a re-route is a copper change.
+  **Amended 2026-11-16 (D-94):** the operator declined the re-route; D-94 is the exemption that applies to the
+  /CHG_ARM figures of this row, and the row itself does not change.
+- `gen/cr_geometry.py`: the D-39 frame row is labelled as a constant of the generator (result info), not as the board
+  outline, which is the D-62 row (R2-CRL-6).
+- `gen/fab_readme.py`: the CR design-value row states that the power and GND pours fill at the 0.127 mm rule minimum
+  (measured /GND to /VCHG, /VCHGIN and /VCHGOUT 0.1271 mm; /VCHGIN to /VCHGOUT 0.150 mm), although the F.Cu zones
+  declare 0.2 mm; no track is 0.127 mm (R2-CRL-2). The board was not refilled.
+- The A.8 D103 loop budget of 2 nH is estimated, not extracted: board copper about 0.7-0.8 nH (strip over L2,
+  h = 0.1999 mm), package inductance TODO(verify: STPS2H100A / MBRA2H100T3G). The sim 1 nominal L_d of 3 nH covers
+  the estimate (R2-CRL-4; `update_2026-11-14/notes_phaseC_board.md` section 4.5).
+- Counts: CR 107 pass, 1 pass with listed exceptions, 3 exemption, 18 information, 0 FAIL (was 108, 1, 3, 16, 0); EIB
+  6 pass and 2 information (was 5 pass, 1 deviation, 2 information).
+- Reversal: restore the three scripts from the pre-phase-C state and run them again; no board changes.
+
+**D-88. Netlist Note fields (2026-11-15, phase C, REVIEW R2-BOM-1, R2-BOM-2, R2-INT-4, R2-INT-5, R2-CRT-0, R2-LOG-1).**
+
+- Decision: `gen/netlist.py` changes two Note fields and three comments; no pin, net, value or MPN changes. The J1 Note
+  names the mating SSQ-110-01-G-S and SSQ-112-01-G-S; the J102 Note says that the mate is built from workshop stock,
+  with TODO(verify: workshop wire, T-A-05) for the gauge against the R170/R171 joints. The comments cite TCKE1401NM DS
+  Rev. 3.0 section 7.10 (p.9) for the IMON capacitor statement, with TODO(verify: Toshiba IMON capacitive load through
+  series R) (C129 unchanged), and TI SCES487I Figure 4-1 / Table 4-1 for the U107 pinout.
+- `gen/sync_fields.py` has a new `--add-missing` option, which adds a missing MPN, Manufacturer or Note field as a
+  hidden F.Fab field, and it saves only on a change. It wrote 8 CR fields (J1 and J102 Notes updated; Notes added on
+  U102, U103, U119, U120, D103 and J101) and 1 EIB field (J201 Note).
+- `cr/cr.kicad_sch`, `cr/cr.net` and `cr/erc.rpt` are regenerated (ERC 0 / 0). The EIB schematic and both symbol
+  libraries regenerate identically; `eib/eib.net` and `eib/erc.rpt` differed only in their date line and were
+  restored. Net membership is identical (CR 78 parts and 77 nets, EIB 46 parts and 35 nets).
+- Identity: the date-stripped `cr/cr.net` sha256 is `37ef45c1f4e43f35a7f57e51ff9c4c20eede1fd6acf164b62c121e09eed94e36`
+  (full file `148f1952ee89dab5ede5555a94941b4e401a97560cfb6c0bb77f40cbaa0d8d00`, exported 2026-11-15T03:46:24-0800);
+  `gen/netlist.py` sha256 `2efe2225ae1197367d18012ef159488c5305fd8b470180407aca55ac5c7c1c08`, `gen/sch.py` unchanged
+  (`6827b590...`). The EIB identity of Table D-53b is unchanged. This supersedes the "After D-82" column of Table
+  D-53b as the current identity.
+- Evidence: `update_2026-11-14/notes_phaseC_bom.md`. Board diff: Note property blocks only; segment, via, zone, pad
+  and graphic counts unchanged.
+- Reversal: restore `gen/netlist.py` and `gen/sync_fields.py` from the pre-phase-C state, regenerate the schematic and
+  netlist, run `gen/sync_fields.py`, and delete the seven added Note fields on the boards.
+
+**D-89. BOM set regenerated in place with opt-in SPARE lines (2026-11-15, phase C, REVIEW R2-BOM-0 to R2-BOM-6,
+R2-CRT-1, R2-DOC-11).**
+
+- Decision: `gen/bom_split.py bom_2026-11-14` rewrites the CSVs of `bom_2026-11-14/`. The generator gains note
+  rewrites (C101, D103, D104-D106, J102, R131B/R132, U107), the EIB stencil history, a word-boundary description cut
+  (`desc120()`), five SPARE lines and a printed optional-file total. `bom_2026-11-14/README.md` is edited by hand.
+- Order effect: the 62 main Digi-Key lines are unchanged (61 MPNs, about USD 91.49); `system_bom.csv`,
+  `mouser_import.csv` and `digikey_skipped.csv` are byte-identical to the previous run. The opt-in file
+  `digikey_optional.csv` holds nine lines, about USD 25.80: the four alternate and bench lines of D-83 (about USD
+  4.74) and five SPARE lines (USD 21.07): TLV3012BIDBVR x 2, GMC21X5R106K50NT x 5, TSW-112-07-L-S x 1 (a second
+  matched J1 set), SSQ-110-01-G-S x 1 and SSQ-112-01-G-S x 1. A SPARE line never enters `digikey_import.csv`.
+- Conflict recorded (R2-CRT-1): design section E reads "2 (+2)" and "5 (+3)" for the 10 uF parts, while the main line
+  orders exactly 7. Either the operator adds the GMC21X5R106K50NT SPARE line, or section E changes to "2" and "5"
+  (section 11 item 44).
+- Evidence: `update_2026-11-14/notes_phaseC_bom.md`; `bom_2026-11-14/README.md` section 5.4. Line counts with header:
+  cr_bom 47, eib_bom 14, system_bom 27, digikey_import 63, digikey_optional 10, mouser 5, skipped 36.
+- Reversal: remove the SPARE entries from the `ALTERNATES` table of `gen/bom_split.py` and run it again.
+
+**D-90. Packages written again in place; older packages are not edited (2026-11-15, phase C, REVIEW R2-DOC-7,
+R2-CRT-3).**
+
+- Decision: `bash gen/export.sh cr 2026-11-14` and `bash gen/export.sh eib 2026-11-14` wrote both packages again
+  after D-85, D-86 and D-88, and `gen/fab_readme.py` wrote both READMEs against `fab/cr_2026-11-13f` and
+  `fab/eib_2026-11-13c`. ERC 0 and DRC 0 / 0 / 0 on both boards; NPTH check CR 6 holes and EIB 2 holes pass.
+- Difference from the first 2026-11-14 export: on the CR only `cr-F_Silkscreen.gto` and `docs/cr.net` (the D-88 Note
+  fields); on the EIB only the two silkscreen Gerbers. Drill, copper, mask, paste, position and BOM files are
+  identical. The CR F.Paste equals `fab/cr_2026-11-13f` (D-69 windows); the EIB F.Paste has 62 flashes (D-71). Every
+  file that differs from 13f / 13c has a recorded reason in the package README.
+- `gen/fab_readme.py` changes: the CR quantity note cites design section E (6, r9-25) in place of "the E BOM asks for
+  5"; the EIB size row reads 24.0 x 38.0 mm (A.9 since r9-25); the PCBWay and JLCPCB rows point to
+  `assembly/<board>-bom.csv`, because KiKit wrote no `bom.csv`; the silkscreen reasons name D-85 and D-86. Each old
+  text is quoted as superseded in the generated README.
+- Older packages: `fab/cr_2026-11-13f/`, `fab/eib_2026-11-13c/` and every earlier package are superseded and must not
+  be uploaded. They are not edited: a dated package is a record. `README.md` sections 9.3, 9.4 and 12 name the
+  current and the superseded packages instead of a banner (REVIEW R2-DOC-7).
+- Record (REVIEW R2-CRT-3): phase B had added superseded banners to `fab/eib_2026-11-11/README.md` and
+  `bom_2026-11-11/README.md`. The orchestrator reverted both banners in phase C, because older packages and BOM
+  folders are not edited; `git diff` shows no change to either file. The banners on `DESIGN_STATE_2026-11-12.md` and
+  `MORNING_REVIEW_2026-11-13.md` stay, because those files are state records with a declared successor, not packages.
+- Reversal: run `gen/export.sh` and `gen/fab_readme.py` again from the pre-phase-C boards and generator.
+
+**D-91. Simulation re-runs that change recorded numbers (2026-11-15, phase C, REVIEW R2-SIM-0 to R2-SIM-9,
+R2-LOG-0, R2-PWR-0).**
+
+- Sim 2 (`sim/chopper/RESULTS.md` section 5.8, Tables 5.5-5.8; `sim/chopper/run_r2.py`): the sim 5 corner model (both
+  pin leaks at +-320 nA, 0.1 % resistors) gives the fitted divider OVP rising 21.588-25.019 V and falling
+  19.899-22.927 V; 21.588 V replaces "21.90 V with pin leakage". Lever (a) is R102 845 kOhm, R103 68.1 kOhm and R104
+  47.5 kOhm (0.1 %, E96 and E192): OVP rising 23.256-26.863 V (23.818-26.300 V without leakage, 24.935 V typical),
+  OVP falling 21.439-24.614 V, UVLO rising 9.092-10.571 V; every healthy first trip lies at the charger-plus-chopper
+  capacity, 1.4-1.6 A. The maximum lies 0.66 V above the BQ25798 VBUS_OVP maximum 26.2 V (SLUSDV2C section 6.5,
+  p.9); the V_OVPR spread 1.298/1.18 = 1.100 makes the conflict structural. A 0.5x string (432 kOhm, 33.2 kOhm,
+  24.6 kOhm) gives 23.163-26.180 V, TODO(recalc: sim 5 part b). The 21.35-23.10 V band is the chopper conduction
+  onset, not a V-MOT ceiling. The U101 body diode, added in 1304 runs, changes no trip, cut or latch count. Amends
+  D-67 (bands) and feeds section 11 item 35.
+- Sim 1 revision 3 (`sim/hardshort/RESULTS.md` sections 5.6 and 5.7, Tables 7a and 7b; `run.py --tft-check`): over
+  tFASTTRIP 3-8 us (TCKE1401NM Table 10.3, 4 us typical and 8 us maximum at R101 8.45 kOhm), the fast-trip-short OUT
+  minimum is +0.72 to +1.39 V at 2 ohm and +0.25 to +0.53 V at 1.5 ohm (old 6 us basis: +0.82 to +1.23 V and +0.30 to
+  +0.45 V); the hard-short headline is unchanged. After the fast trip the part regulates at I_LIM 1.97-2.77 A for up
+  to 190 ms: 23.8-65.4 W and up to 12.4 J per event (TODO(verify: Toshiba) for the dwell after an SCP or UVLO trip).
+  Amends the D-79 substitute-short figures and feeds section 11 item 42.
+- Sim 4 (`sim/permit/RESULTS.md` section 5.6a, Tables 5.4a-5.4d; `t2brief.py`, `t2brief_check.py`): the formal T2
+  interruption re-run (4116 decks) gives the as-built hazard band 5-30 us, worst 1.810 V and 50.7 us above 1.0 V,
+  and the option table of design J.2 item 77. The H1 inhibit latency is 27.0-34.3 us (fixed delays) for 470 pF,
+  197-269 us for 4.7 nF and 340-598 us for 10 nF; the "134/232 us" estimate is superseded. The as-built H.13 budget at
+  1.80 A is 158.7 us with fixed delays and 139.1 us under the overdrive model, below the T-B-06 150 us (TODO(verify:
+  SBOS300C tPD at about 0.5 mV/us); recorded only). Run order: `run.py`, then `t2brief.py`, then `t2brief_check.py`,
+  because `run.py` deletes all outputs at its start. Amends D-81.
+- Sim 3 (`sim/comparators/`): `run_log.txt` is now the console of the final run; the earlier console is kept as
+  `run_log_pre_dedup_2026-11-15.txt`. No number changes (R2-SIM-8).
+- Sim 5: the maximum OVP-start interval is 4.021 s ("4.02 s" in design H.21 and H.23(q); R2-SIM-5). The design
+  document F.5 T10 proof (b) decay to 8.0 V is 0.083-4.39 s on the sim 5 basis (design r9-26, doc_fw appendix A).
+- Evidence: `update_2026-11-14/notes_phaseC_sim_chopper.md`, `notes_phaseC_sim_permit.md`, `notes_phaseC_sim_misc.md`;
+  each RESULTS.md keeps the old text in superseded form, and the old CSVs keep their timestamps.
+- Reversal: none needed for a simulation record; a later re-run supersedes these figures in the same form.
+
+**D-92. README figures regenerated (2026-11-15, phase C, REVIEW R2-DOC-6).**
+
+- Decision: `gen/readme_figures.py` now draws U101 as "TCKE1401NM + D103", W5 as nine wires on 3 x 3 pads with two GND
+  wires, the J-TAP lead as a Micro-Fit mate from workshop stock, and R131B and R132 at 4.99 kOhm (`gen/netlist.py`
+  lines 243-244; `cr/cr.net`). The script was run with the miniforge Python, and its text-overlap check reports 0
+  problems on both figures. `figures/fig2_1_block_diagram.{png,svg}` and `figures/fig5_1_permit_gate.{png,svg}` are
+  regenerated; the fig5_1 note cites SCES487I Table 4-1.
+- Reversal: restore the five strings and run the script again.
+
+**D-93. U101 OVP dropout on hard brakes accepted; divider unchanged (2026-11-15, operator ruling, design J.2 item 74).**
+
+- Decision: the charger dropout that an early U101 OVP trip causes on a hard brake is accepted. R102 845 kOhm, R103
+  64.9 kOhm and R104 51.1 kOhm stay (OVP rising 21.588-25.019 V at the sim 5 leakage corners). R101 stays 8.45 kOhm;
+  the 7.87 kOhm T-B-23 retune of design J.2 item 74 is not taken. The VESC regen limit is unchanged, and
+  `bom_2026-11-14/mouser_import.csv` is unchanged. Lever (a) (R103 68.1 kOhm, R104 47.5 kOhm) is not taken.
+- Basis:
+  - The OVP rising low edge spreads 1.6 V from the 23.188 V typical. The U101 V_OVPR tolerance (1.18-1.298 V,
+    TCKE1401NM Table 10.1) gives 0.997 V of it, the 0.1 % resistors 0.042 V, and the +-320 nA worst-case pin leakage
+    0.561 V. A low-threshold U101 trips at 22.15-22.19 V without any leakage, so a buffered divider would not remove the
+    risk.
+  - Sim 6 (`sim/regen_nocut/RESULTS.md`): the 8 measured hard brakes (12 A from 3.00 m/s or below) deliver 10.9-19.0 W
+    peak and 2.0-5.5 J to V-MOT. With the nominal 21.739 W charger they do not trip at any drivetrain efficiency up to
+    1.0. At the lo 18.8 W corner the excess is 0.42 mJ against the 18.09 mJ that lifts a 0.4 mF V-MOT to the 21.588 V
+    OVP minimum, at the assumed gear efficiency 0.9 (a trip at 1.0; TODO(verify) gear efficiency).
+  - An early trip with a converting charger needs a low-threshold U101 and the H-hi chopper corner (or H-typ with
+    leakage), together with a brake that exceeds the charger capacity long enough: a 12 A brake from 3.11 m/s (lo) or
+    3.49 m/s (nominal), or a 25 A State-98 'T' brake from 2.51-2.70 m/s. The RegenTest_decel_sweep cycle brakes from
+    3.50 m/s. In the 100 kHz degraded mode of design FR-41 item 2 at 0.4 mF the 3.00 m/s brakes keep 0.96-0.99 V of
+    margin, or 0.22-0.24 V if the staged phase lasts 2.0 ms. The VESC regen limit of 1.5 A blocks the hi charger corner.
+  - With a VESC cut at 23.4-25.2 V the consequence is the lost harvest of that brake (at most its 2.0-5.5 J at V-MOT,
+    9.2 J from 3.5 m/s) and a 0.5 s loss of regen braking per cut (sim 2 assumption). Sim 2 section 5.4 gives
+    millisecond R-G / Z-SNT pulse overstress for cuts at 25.2-30 V.
+- Residual risk:
+  - Without a VESC cut, V-MOT settles at 28.7-31.6 V for 18.9-23 W on H-hi with sustained overstress of R-G, Z-SNT,
+    R-SHUNT and the BSP170P; 35 V and the D-BC-RG OVP latch follow only from about 30 W (sim 2 Part D). The VESC
+    `l_max_vin` and fault-stop bench item (design J.2 item 74) therefore stays required before hard-regen tests.
+  - A charger that does not convert (CV taper, EN_CHG 0, P5 LOW) trips U101 on ordinary brakes at any OVP corner; that
+    mode does not depend on the divider (sim 2 Part D).
+  - A brake current above 12 A lowers the start-speed thresholds; the 'T' ramp already allows 25 A.
+- Open with it: design FR-50 (`OV_CHG` value, response and filter) and the FR-30 threshold stay for the firmware round
+  (section 11 item 36).
+- Reversal: order 0.1 % 68.1 kOhm and 47.5 kOhm for R103 and R104 (TODO(verify: distributor stock)), or the 0.5x string
+  of design J.2 item 74; both are part changes only, with no copper change.
+
+**D-94. /CHG_ARM keeps its route in the D-36 zone at R114 under a conditional exemption (2026-11-16, operator ruling,
+design J.2 item 83).**
+
+- Decision: the re-route of /CHG_ARM out of the D-36 zone is declined (operator ruling 2026-11-16, chat: "I accept
+  declining"). D-94 is a D-36 exemption for /CHG_ARM at R114, under the conditions below. The copper does not change.
+  The generated row of `cr/constraint_check.md` still reports 5.25 mm; D-94 is the exemption that applies to it.
+- Geometry (re-measured on `cr/cr.kicad_pcb` and confirmed by an independent check, 2026-11-16):
+  - 5.253 mm of /CHG_ARM F.Cu lies in the 2.0 mm zone, all in one segment (36.359, 54.135)-(36.359, 61.135) of
+    0.1524 mm width, with no via in the zone.
+  - The minimum gap to R114 pad 2 (/N_UVP, IN+ of the U103 UVB comparator) is 0.224 mm (0.2238 mm). Only 1.40 mm of
+    the run faces that pad, so 5.25 mm is an upper bound of the parallel length.
+  - In1.Cu and B.Cu GND cover 100 % of the in-zone run. The /GND F.Cu pour lies 0.127-0.128 mm from the track on
+    the other side.
+  - /CHG_ARM is not a static line. It switches at each charge-window boundary, on arm and on disarm.
+- Basis:
+  - The estimated coupling is 0.02-0.04 pF (2D model, about +-50 %). With C108 = 1.0 nF, the step on /N_UVP is about
+    0.1 mV (0.07-0.13 mV); with the 470 pF option (D-81) it is 0.14-0.28 mV.
+  - The node hysteresis is about 37 mV and the node margin about 0.24 V at VBUS 15.9 V. The disarm edge pushes the
+    node toward the safe side.
+  - A hard /CHG_ARM-to-/N_UVP short is a latent double fault. Alone, it is invisible at the nominal bus, because UVB
+    is already HIGH. With a lost T2 tap during an armed window, it equals the "UVB stuck HIGH" fault that the design
+    document analyses. VINDPM and the FR-08(d) H1 plausibility trip (at most 5 ms) bound that fault.
+  - The literal D-36 test, "where no other route exists", is not met. A zone-free path exists, but only through the
+    J101 wire-pad row and column gaps beside /J3V3_1, /CE_DRV_J, /GND, /ILIM_REL_A and /ILIM_REL_B, with 2 more vias.
+    That path is unrouted and unchecked.
+  - The exemption is therefore an operator ruling on comparative grounds. A short in the J101 grid would be a worse
+    fault next to a hand-soldering step, and the re-route would reopen the verified CR package.
+- Conditions:
+  - On every assembled CR, a cold resistance check from J1.11 (/CHG_ARM) to R114 pad 2 (/N_UVP) is mandatory, on a
+    low-voltage resistance range. The expected reading is roughly 100-150 kOhm: R108 47 kOhm in series with R115
+    104 kOhm in parallel with the R114/R111/R112 path. TODO(verify: first assembled CR). A reading below about
+    1 kOhm indicates a short.
+  - T-C-01 is not a substitute for that check. Its rig drives H1 and UVB from supplies (forcing method TODO(design:
+    T-C-01 rig)), so it can mask the short.
+  - C108 stays fitted, either 1.0 nF or the 470 pF option (D-81).
+  - After reflow, the flux around R114, C108 and D106 is cleaned, and R114 pad 2 is inspected under magnification.
+  - If the CR copper is re-spun for any other reason, /CHG_ARM is routed out of the zone and the exemption is
+    dropped.
+- Residual risk:
+  - A short that forms after the build check, for example from contamination in service, stays latent until a T2 tap
+    is lost during an armed window. VINDPM and the FR-08(d) H1 plausibility trip then remain the only bounds.
+  - The mask web between the R114 pad 2 opening and the track is about 0.17 mm, so a bridge needs a mask breach or a
+    misregistration of that size. TODO(verify: OSH Park) the mask registration tolerance.
+  - The cold-check figure assumes that the U105/U106 input protection does not conduct at the meter test voltage.
+- Open with it: design J.2 item 82 (section 11 item 40) stays open. Design revision r9-28 corrected the "static arm
+  line" wording in the A.8 Analog bullet and in J.2 item 83. `update_2026-11-14/notes_phaseC_board.md` still describes
+  /CHG_ARM as a static arm line; this log does not edit it.
+- Reversal: route /CHG_ARM out of the zone in a CR copper change, then refill, run DRC and the constraint check,
+  export again and review the package again. If the D-80 grid reorder is taken, design the re-route in the same edit,
+  because the only known zone-free path passes the J101 grid.
+
+**D-95. EIB phase B reference rule set kept; CR W6 "GND" label accepted as placed (2026-11-16, operator rulings,
+section 11 items 28 and 29).**
+
+- Decision: the operator kept the phase B EIB reference rule set (operator ruling 2026-11-16, chat: "I accept keeping
+  it the way it is") and accepted the W6 "GND" label as placed (chat: "Accept as-is"). 18 of the 26 fitted EIB
+  references stay on the top side. Neither board is exported again.
+- EIB reference findings:
+  - R252 breaks no phase B rule at its phase A position. The search orders the parts by candidate count, so U202 (2
+    candidates) is placed before R252 (118) and takes the space. The orphan rule then removes U202, and the search
+    never offers the space again.
+  - 19 fitted references on top are reachable: R252 at (11.32, 22.83) mm, 90 deg, with 0 phase B violations in a
+    scratch run. This position is not taken. Take it only if the EIB is exported again for another reason; it also
+    moves the bottom texts of R254 and R271.
+  - The phase A board was never exported. `fab/eib_2026-11-13c/` and `snapshots/2026-11-14_pre_review/` hold the D-64
+    placement (20 on top).
+  - A re-run of the phase A rules on the current board gives 22 on top. However, 13 positions differ from the phase A
+    board, and the U201/C202 ambiguity (D-78 defect D4) returns.
+  - The R254 bottom text is 0.6 mm wide, not 0.8 mm.
+  - The control for the eight bottom-referenced parts is the iBOM check during assembly, before the EIB goes onto
+    its standoffs (D-78).
+- W6 label findings:
+  - The label is on the CR, not on the EIB. Several records list it beside the EIB item without naming the board.
+  - The ink box is 0.0857 mm from the W6 pad 2 mask opening and 0.1365 mm from the copper.
+  - The strokes lie over the drill of the tented /GND via at (25.392, 39.097) (`update_2026-11-14/notes_cr.md` line
+    143).
+  - The label already touches the W2 courtyard line: 0.0045 mm from the ink box to the circle centreline at x 25.800.
+  - No vertical "GND" level with pad 2 meets both the 0.10 mm mask rule and the W2 courtyard rule: 1.040 mm is
+    available and 1.050 mm is needed. The text is at the DRC minimum height and stroke, so it cannot shrink.
+  - The D-78 CR text rules formally cover only texts moved or added in phase B; the W6 label is a D-73 text.
+  - Consequence of the gap: at worst a thinned edge of one letter, which is cosmetic. W6 is fitted only with a pack
+    NTC, and its square pad 1 carries "TS".
+- Scope: both items are silkscreen only and have no copper option. `MORNING_REVIEW_2026-11-14.md` section 3.4 lists
+  them under "Layout items with a copper option"; its 2026-11-16 entry records that both are silkscreen only and have
+  no copper option.
+- Open: TODO(verify: OSH Park, at submission) whether OSH Park clips silkscreen at mask openings. TODO(verify:
+  assembled board) whether the J1 post hides the W3 reference (about 0.2 mm overlap of the J1 courtyard ring); this
+  is an inspection step on the assembled CR, not a Gerber decision (section 11 item 29).
+- Reversal: for the EIB, restore the phase A rules through `MASK_GAP`, `DRILL_HARD` and the `orphan_check()` call of
+  `gen/eib_silk_refs_r2.py` (D-78), or place R252 at the 19-on-top position, then export again. For the W6 label, move
+  it in `gen/cr_lead_labels.py` and export the CR again. A re-run of that script deletes the W2 "GND" text, and
+  `gen/cr_silk_fix_r4.py` places it again (section 2); a +0.02 mm nudge meets the mask rule but overlaps the W2
+  courtyard by 0.0155 mm.
+
+**D-96. Charger I2C at 100 kHz on the fitted 10 kOhm MB pull-ups (PM9 withdrawn), FR-07 budget 3.5 ms, FC-window
+thresholds 0.40 / 0.50 A; regen VINDPM 19.0 V retained (2026-11-16, operator rulings, design r9-30).**
+
+- Decision (operator rulings 2026-11-16, chat):
+  - I2C: "I would rather stick with 100kHz and the existing pullups rather than switching to 400kHz and have to do
+    additional board rework in a difficult location", and later "I'm leaning towards keeping the 10k resistors and
+    running at 100kHz". PM9 (MB RSDA/RSCL 10 kOhm -> 2.7 kOhm) is withdrawn. 100 kHz with 10 kOhm is the design
+    case, no longer a fallback or a counted degraded mode. EM6 (EVM R39/R40 removed) stays, for its back-powering
+    reason; the CR I2C pull-ups R145/R146 stay not fitted (no footprint since design r9-3).
+  - FR-07: "Let's use 3.5ms as the edit-to-write-complete budget", that is pin-34 rising edge to REG03-05 write
+    complete <= 3.5 ms (was 1.5 ms, which had no physical derivation).
+  - FC window: "let's use G<400mA, hysteresis at G>500mA as the fuel cell charging window limits". A window closes at
+    G < 0.40 A and is admitted at G >= 0.50 A (was close < 0.30 A, admit >= 0.30 A plus H_adm about 0.40 A). The
+    window floor, and so the IINDPM at the H1 edge, becomes 0.40 A. The floor is a close threshold, not a clamp above G.
+  - Criterion: "Replace with no overvoltage trip". The 20.5 V test acceptance is replaced by no U101 OVP trip at the
+    s5-lo corner, 21.588 V.
+  - C_VMOT: "Our previous data logs and measurements suggest 1.0mF on the motor node as a lower bound, likely
+    higher." The design uses C_VMOT,min = 1.0 mF until T-E-04 measures it.
+  - VINDPM: a regen-image VINDPM of 18.4 V (band 18.03-18.77 V) was evaluated and deferred by the operator: "Let's
+    keep at 19V for now then, with a note to revisit later if necessary." The regen-image VINDPM (REG05) stays
+    19.0 V (0xBE), band 18.62-19.38 V; design J.2 item 91 records the deferred option.
+- Board consequence: no CR or EIB copper, netlist, Note field or package changes. The MB rework loses PM9. The MB
+  RSDA/RSCL line (2.70 kOhm, CRCW06032K70FKEA) still stands in `bom_2026-11-14/system_bom.csv` and
+  `bom_2026-11-14/digikey_import.csv`; TODO(update: bom_2026-11-14) remove it from the order. The frozen
+  `bom_2026-11-11/` and `bom_2026-11-13/` sets are not edited.
+- Basis (`sim/raise_latency/RESULTS.md` and `run.py`; IINDPM-first order; minimum over the measured brakes and four
+  charger corners; C_VMOT 1.0 mF; IINDPM 0.40 A at the edge; threshold 21.588 V):
+  - The largest latency with no s5-lo trip is 6.15 ms nominal (+2.65 ms over 3.5 ms) and 3.71 ms in the stacked
+    worst case (efficiency 1.0, 1 ms charger lag, IINDPM accuracy 0.83 and resistor TCR, d310 corner), a margin of
+    +0.21 ms. This is the worst latency-limited case; the same stack at the lo corner is capacity-limited. A 17.5 V
+    VBUS (OV_BUS limit) at the edge gives 4.29 ms (+0.79 ms). Every case without the efficiency-1.0 stack leaves at
+    least 0.28 ms (12 A from 3.5 m/s), and at least 0.79 ms without that brake.
+  - Some cases are capacity-limited and trip at a latency of 0: a 12 A brake from 3.25 m/s or more at the lo corner,
+    efficiency 1.0 at the lo corner, a 23 W constant-power brake at the lo, nominal and d310 corners, and a hard brake
+    inside a CV-phase window. No latency budget covers them.
+  - The firmware fits the budget at 100 kHz with 10 kOhm and the x1.133 clock-stretch factor: 1.505-2.539 ms for the
+    pin-34 ISR architectures (a, a', b2) and the timer-polled c1; the `loop()`-driven ones (d, c2) do not fit. The predicted SCL/SDA rise time is 593-839 ns for Cb 70-99 pF against the 1000 ns
+    standard-mode limit; the Cb ceiling is 118 pF. The FR-07 engine sets the LPI2C SETHOLD to at least 4.75 us,
+    because the `Wire` default of 3.42 us is below the UM10204 tHD;STA of 4.0 us and tSU;STA of 4.7 us.
+  - The evaluated VINDPM 18.4 V option moves none of the latency results (identical to 0.01 ms), because every
+    crossing occurs above about 20 V, where the charger is at its current or power limit.
+- Effect on earlier records: the D-93 basis cites "the 100 kHz degraded mode of design FR-41 item 2 at 0.4 mF". That
+  mode is now the design case, and the design C_VMOT is 1.0 mF. The D-93 record is not changed; the U101 dropout
+  ruling stands.
+- Open with it (for the operator; not ruled here):
+  - A hard brake inside a CV-phase window trips U101 at any latency, which conflicts with the no-trip criterion while
+    "CV does not close a window" (design F.4, FR-39).
+  - In-window brake speed and power: a 12 A brake from 3.25 m/s or more is capacity-limited at the lo corner, and no
+    firmware limit exists. The T-B-12 23 W pass criterion fails at a latency of 0 at the lo, nominal and d310 corners.
+  - T-D-12 (false restore; start 19.72 V, IINDPM 0.40 A, 1.0 mF, 21.588 V) trips 3.52 ms after the restore nominal
+    and 2.59 ms stacked (IINDPM accuracy 0.83 and 1 ms lag); after the <= 1 ms detect tick the re-raise must land
+    within 2.52 ms nominal and 1.59 ms stacked. T-D-12 needs its own re-raise deadline: <= 2.5 ms nominal, <= 1.5 ms
+    if the stacked case must pass (architecture (a) 1.539 ms stretched has no margin there; a'' 0.973 ms fits).
+  - The VESC cut level (`l_max_vin`) is still unknown. A cut near 21.35 V would bind before U101.
+  - The 0.21 ms stacked margin must hold the BQ25798 register-to-loop dead time, which TI does not specify;
+    TODO(verify: TI), measured by T-B-12 and T-B-24.
+  - VINDPM 18.4 V is deferred (design J.2 item 91). If it is revisited, it lowers the V-MOT static maximum to
+    19.10 V and relaxes T-D-12 to 3.53 / 2.57 ms re-raise; its open side effects are the H1 rise maximum 18.05 V
+    above the 18.03 V VINDPM minimum, the bus-feed margin 1.12 -> 0.53 V, the T4(b) 18.2 V condition inside the
+    band, and an H.7 capability of about 21.07 W.
+- Reversal: restore PM9 (fit 2.7 kOhm at MB RSDA/RSCL) and the 400 kHz FR-07 caps; restore the 1.5 ms budget and the
+  0.30 A thresholds in the design document.
 
 ## 9. Verification
 
@@ -1788,6 +2777,21 @@ the EIB constraint check is unchanged. The KiKit OSH Park preset ran without mes
 
 **D-69 (2026-11-13):** after the U101 paste-window change, CR DRC (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues; the CR constraint check gives 108 pass rows and 0 FAIL, with the U101 aperture row at 54.6 % and 0.160 mm.
 
+**D-70 to D-84 (2026-11-14):** on the final boards of the round, ERC reports 0 messages on both schematics, and DRC
+(`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues on both boards
+(re-run 2026-11-15 for this record). The CR constraint check has 108 pass rows, 1 pass row with listed exceptions, 3
+exemption rows, 16 information rows and 0 FAIL; the EIB check has 5 pass rows, 1 deviation row and 2 information rows.
+`gen/pcbdiff.py` against git HEAD `014c745` reports 0 added or removed segments and vias on both boards and zone
+changes in fill only (CR VCHG_L1 and GND_L1_fill, D-75; EIB AGND_L1_pour and AGND_L2_pour_1, D-70).
+
+**D-85 to D-92 (2026-11-15):** after the phase C silkscreen and field edits, ERC reports 0 messages on both
+schematics, and DRC (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity
+issues on both boards (`cr/drc.rpt` 2026-11-15T05:29:19, `eib/drc.rpt` 2026-11-15T05:36:57). The CR constraint check
+has 107 pass rows, 1 pass row with listed exceptions, 3 exemption rows, 18 information rows and 0 FAIL; the EIB check
+has 6 pass rows and 2 information rows. `gen/pcbdiff.py` against `014c745` again reports 0 added or removed segments
+and vias, and a pcbnew comparison finds footprint positions, pads, zone outlines and tracks identical to the
+pre-phase-C boards.
+
 ### 9.2 Constraint measurements
 
 `cr/constraint_check.md` and `eib/constraint_check.md` hold the measurements (A.2 pin identity, A.7 outline, A.8
@@ -1818,7 +2822,7 @@ proposals; they enter the design document through the step (1) update of D-50.
 | P-05 | A.9 Outline | 24.0 x 38.0 mm EIB | D-25 |
 | P-06 | B.8 R106 row, E R107 row | Delete the DNP R106 footprint | the r8 F17 exposed-copper rule (D-06) |
 | P-07 | A.8 per-region tables | State courtyards on the IPC least-density basis (0.10 mm) or enlarge the regions. **Withdrawn 2026-11-12:** the courtyard basis reverts to the IPC nominal 0.25 mm (D-03), and the per-region table is re-derived on the new outline | D-03 |
-| P-08 | B.4 / B.8 U101 MODE, SHDN | Record that MODE open selects latch-off and that SHDN open enables with 0.48 V margin; only UVLO or a power cycle resets a latch | `lib_verification` section 2 |
+| P-08 | B.4 / B.8 U101 MODE, EN (TCKE1401NM; was SHDN) | Record that MODE open selects latch-off and that EN open is permitted (TCKE1401NM DS Rev. 3.0 Table 6.1, section 7.14) with a 0 V guaranteed margin (VENUP 2.0-4.6 V against VEN_ON 2.0 V minimum, Table 10.2, p.15), so pin 12 needs a clean open node (T-C-04 step (f)); a restart needs EN cycled, VSYS at 0 V or the UVLO pin below V_UVLOF (section 7.15, Table 7.3) (**Superseded 2026-11-14, D-67; marked 2026-11-15, REVIEW R2-PWR-1 and R2-DOC-3:** "SHDN open enables with 0.48 V margin; only UVLO or a power cycle resets a latch", the TPS26630 figures) | `lib_verification` section 2; design B.4 EN row |
 | P-09 | B.8, B.5 (ruled 2026-11-11) | Delete the DNP tier 1, 2 and 3 footprints (D-31); B.8 loses U117, R160-R163, C127, C124 and the F23 `T19_FCI` net. **Extended 2026-11-12:** no part is re-admitted; B.5 is deleted; FR-14(e) is rewritten; the F22, F23 and F24 pads are removed (D-31) | CR routing capacity |
 | P-10 | A.8 +x pocket row, U101 centre | U101 and the IN strip 0.40 mm toward -y; R103 in the pocket, R104 on the bottom within 5 mm of pin 7. **Withdrawn 2026-11-12:** R104 is a top part (D-32 retired), and the eFuse cluster is re-derived on the new outline (D-09) | U101 pin 13/14 escape and the bottom clearance rule (D-09, D-32) |
 | P-11 | A.8 stack-up and Copper (ruled 2026-11-11) | CR at 5/5 mil with 1 oz outer copper; CHG pads 1.9 mm on the outer layers only. **Amended 2026-11-12:** OSH Park-only rule file, 6/6 mil net-class default and 5/5 mil at necks, 0.6 / 0.3 mm vias only, unused inner pads removed on every THT pad, L4 solid GND (D-20, D-29, D-30) | D-29, D-30 |
@@ -1942,7 +2946,9 @@ Parts and land patterns (`lib_verification_2026-11-11.md`):
     against a Samtec print in the review session; the closure rests on the operator's confirmation.
     (**Superseded:** "TODO(verify: Samtec TSW-1XX-XX-XXX-S MKT print, pin size .025 SQ). **Amended 2026-11-12:** this
     becomes the TSW to SSQ mating check of D-41.")
-13. TODO(verify: Samtec FTSH MKT sheet 2, Fig. 2) the -K plan-view envelope, and the exact order string for J101 with position 6 removed.
+13. Closed 2026-11-14 as moot (REVIEW DOC-6): D-66 retires the FTSH headers, the ribbon and the pin-6 key, so no J101
+    order string remains. (**Superseded 2026-11-14:** "TODO(verify: Samtec FTSH MKT sheet 2, Fig. 2) the -K plan-view
+    envelope, and the exact order string for J101 with position 6 removed.")
 
 Ordering BOM (`bom_2026-11-11/README.md` section 7, items 1-22): every Digi-Key SKU, price, stock and MOQ is
 unverified, because Digi-Key, Mouser and the other distributors served bot checks; the D103, D107, J101, J201 and W5
@@ -1953,6 +2959,12 @@ header and the Molex 2147561101 assembly are added, and the TSW-101 tap-pin row 
 comparator parts leave the BOM (D-47). The BOM is updated from the regenerated netlist. (**Superseded 2026-11-13:**
 "the Molex 2147581101 assembly"; 2147581101 is the male cable, and the operator selected the female 2147561101,
 D-46.)
+
+**Amended 2026-11-14 (D-82, D-83).** The ordering source is `bom_2026-11-14/` (`bom_2026-11-14/README.md`); the
+`bom_2026-11-11/` paragraph above is history. The J101, J201 and W5 candidates are retired by D-66, and the J-TAP
+cable comes from workshop stock (item 16). D103 is the ordered STPS2H100A with an alternate line (D-79), and D107 is
+the ordered Littelfuse SMAJ33A (item 11 stays open for its datasheet check). The netlist carries the ordered parts
+(D-82).
 
 Layout and fabrication, added 2026-11-12:
 
@@ -1979,11 +2991,16 @@ Layout and fabrication, added 2026-11-12:
     pinout for both packages: A 1, GND 2, B 3, Y 4, VCC 5, C 6. The U107 copper matches it (pad 1 /QUAL, 2 /GND,
     3 /FCCN, 4 /QF, 5 /3V3, 6 /P5N). (**Superseded:** "TODO(verify: TI Pin Functions tables) the DBV pinout of
     SN74LVC1G11DBVR against the DCK pinout, pin by pin against B.8 (D-03, D-44).")
-19. TODO(verify: Murata) GRM188R71H223KA01D (22 nF 50 V X7R 0603) for C101 (D-44).
+19. Closed 2026-11-14 as moot (D-82): C101 is the ordered KEMET C0603C223K5RACTU (`bom_2026-11-13/cr_bom.csv`, 22 nF
+    0603), and `gen/netlist.py` carries it. (**Superseded 2026-11-14:** "TODO(verify: Murata) GRM188R71H223KA01D
+    (22 nF 50 V X7R 0603) for C101 (D-44).")
 20. TODO(verify: OSH Park) the silkscreen text minimums for the reference designators (D-12a). **Amended 2026-11-13
     (D-59):** `gen/silk_refs.py` places 60 of 78 references on F.Silkscreen at 1.0 mm (0.8 mm where 1.0 mm does not
     fit) with a 0.15 mm stroke, against rule `fab_silk_text` (0.8 / 0.15 mm); 18 references are on F.Fab only
     (`cr/silk_refs.md`). The OSH Park minimum itself stays open.
+    **Amended 2026-11-14 (D-74, D-78):** 54 CR references are on F.Silkscreen, 7 on B.Silkscreen and 17 on F.Fab only;
+    on the EIB, 18 of 26 fitted references are on the top side. The OSH Park text minimum and the silkscreen
+    registration tolerance stay open (items 26 and 27).
 21. Closed 2026-11-12 (D-51, operator ruling): the stack-up clears every MB component except the power terminals,
     and the -x terminal clearance holds (gap at least 2.200 mm). (**Superseded:** "TODO(measure: operator) the
     L-FC/L-BT height and the bodge part heights for the D-20 air gap, and the rest of the change-request section 6
@@ -2002,3 +3019,87 @@ Layout and fabrication, added 2026-11-12:
     beyond it, R175 about 3 mm toward -y and MH3 about 14 mm toward -y. The operator ruled "That is enough room".
     (**Superseded:** "TODO(verify: Molex 43045 header drawing) the J-TAP latch side and the finger-access keep-out
     (D-46, D-52).")
+
+Added 2026-11-14 (D-70 to D-84):
+
+26. TODO(verify: OSH Park) the silkscreen text minimum (carried from item 20).
+27. TODO(verify: OSH Park silkscreen registration tolerance) for the stroke-to-drill gaps of 0.003-0.054 mm on the EIB
+    (R258, R253, C204, U202 bottom, the board marking; D-78).
+28. Closed 2026-11-16 (D-95): the operator kept the phase B rules ("I accept keeping it the way it is"); 18 of 26
+    fitted references stay on top, and the EIB is not exported again. (**Superseded 2026-11-16, D-95:**
+    "TODO(ruling: operator) the EIB reference rule set: the stricter phase B rules (18 of 26 fitted references on top)
+    or the phase A rules (22 of 26) (D-78).")
+29. The W6 half is closed 2026-11-16 (D-95): the operator accepted the CR W6 "GND" label as placed ("Accept as-is").
+    TODO(verify: assembled board) whether the J1 post hides the W3 reference, which overlaps its courtyard ring by
+    about 0.2 mm (D-73); this half stays open as an inspection step on the assembled CR. (**Superseded 2026-11-16,
+    D-95:** "TODO(ruling: operator) the W6 "GND" label at 0.086 mm from a mask opening against the 0.10 mm phase B
+    rule; and".)
+30. TODO(ruling: operator) D103: keep the STPS2H100A or fit the MBRA2H100T3G alternate; TODO(verify: onsemi / ST pulse
+    rating) for criterion (4); the T-A-05 "VF at 3 A <= 0.5 V" limit needs a restatement (D-79).
+31. Closed 2026-11-16 (D-80 ruling): the operator kept the copper and adopted the staged T-A-06 metering ("Keep
+    copper, meter"); the grid reorder and the CR J101 pour clearance are declined. (**Superseded 2026-11-16, D-80
+    ruling:** "TODO(ruling: operator)".) The W5 single-bridge mitigation: a post-solder isolation check of the
+    orthogonal J101 and J201 pad pairs, or a grid reorder (a copper change) (D-80). **Amended 2026-11-15:** design T-A-06 now meters the
+    grids in stages, against bare-board references and a post-wire table (r9-26, REVIEW R2-INT-1); design J.2 item
+    76. **Amended 2026-11-16 (D-80 addendum):** not ruled. The pads are plated through-holes with exposed rings on
+    both outer layers; none of the 362 880 grid orders makes every orthogonal pair benign; the addendum lists unrecorded
+    masked copper near both grids and the candidate mitigations, none taken.
+32. TODO(ruling: operator) C108 = 470 pF at assembly (part of item 37); TODO(verify: SLUSDV2C ILIM_HIZ deglitch and
+    restart time) (D-81). (**Superseded 2026-11-15, D-91:** "TODO(verify: sim/permit re-run) with T2 interruptions of
+    2-40 us"; closed by sim 4 section 5.6a.)
+33. TODO(verify: Nexperia 2N7002BK datasheet) the Vgs(th) maximum for Q201 and Q202; TODO(verify: Panasonic ERA-3A
+    datasheet) the resistance range of R103 (D-82).
+34. Closed 2026-11-15: the A.8 VCHG-IN length rule is exempted for the buried L3 strap (D-56 amendment), and the A.9
+    REGN length deviation is accepted (D-84); design revision r9-26 added both notes (REVIEW R2-DOC-9, R2-CRL-1).
+    (**Superseded 2026-11-15:** "both design-document rows need a note".)
+
+Added 2026-11-15 (phase C, D-85 to D-92):
+
+35. Closed 2026-11-15 (D-93): the operator accepted the charger dropout on hard brakes; R102, R103, R104 and R101 and
+    `bom_2026-11-14/mouser_import.csv` are unchanged, and the basis is sim 6 (`sim/regen_nocut/RESULTS.md`).
+    (**Superseded 2026-11-15:** "TODO(ruling: operator, before the Mouser order) design J.2 item 74, the U101 OVP band
+    against the VESC regen limit: accept a charger dropout on hard brakes, set the VESC regen limit below the OVP rising
+    minimum, or retune. As fitted,
+    OVP rising is 21.588-25.019 V against the 21.35-23.10 V chopper conduction onset. Lever (a), R103 68.1 kOhm and
+    R104 47.5 kOhm 0.1 % with R102 845 kOhm, gives 23.256-26.863 V rising and UVLO rising 9.092-10.571 V; its maximum
+    lies 0.66 V above the 26.2 V VBUS_OVP maximum, and no divider avoids that (D-91). A retune changes R103, R104 and
+    possibly R101 (7.87 kOhm) in `bom_2026-11-14/mouser_import.csv`. TODO(verify: distributor stock) for 0.1 % 68.1 kOhm
+    and 47.5 kOhm; TODO(recalc: sim 5 part b) for a 0.5x string.")
+36. TODO(ruling: operator, firmware round) design FR-50, the `OV_CHG` threshold, response and filter (with REGEN held
+    HIGH, the single-sample 24.0 V latch trips State 99 mid-brake above V-MOT 24.15 V), on the as-fitted OVP bands of
+    item 35 (**Superseded 2026-11-15, D-93:** "ruled with item 35"); and design
+    FR-51, the recovery of a latched U101 in Run (option (A) wait for Idle, or (B) in-Run recovery with a retry cap).
+37. TODO(ruling: operator) design J.2 item 77, the T2 interruption option (Table J.2-1; sim 4 Table 5.4d): accept the
+    present design with or without C108 = 470 pF, or open a design change (T2 tap redundancy or retention). No option
+    removes the hazard (D-81 amendment, D-91). TODO(verify: SBOS300C tPD at about 0.5 mV/us) for the as-built H.13
+    budget at 1.80 A (139.1 us under the overdrive model against T-B-06 150 us).
+38. TODO(ruling: operator) design J.2 item 78, the H1 fall worst case 17.843 V against the VINDPM_STAGE1 minimum
+    17.84 V (Monte Carlo maximum 17.747 V): accept it statistically, or move the staged VINDPM raise one 100 mV code
+    higher; T-C-02 at 0 C and 60 C measures the TCR term.
+39. TODO(ruling: operator, firmware-round precondition) FW-0: `CLAUDE.md` sections 1-3 conflict with the r9 rules
+    (section 2 requires REGEN_ENABLE LOW before FC_CHARGE_ENABLE, whereas FR-06 and FR-49 require the opposite;
+    section 3 describes the Ag105); design D.5 items (7) and (8) list the lines. This log does not edit `CLAUDE.md`.
+40. TODO(ruling: operator) design J.2 item 82: the VCHGIN strap and the J1.10 joint at the 2.77 A I_LIM maximum (D-57
+    section 10.2 C, D-56 section 11.9 C against 10 C; J1.10 perimeter 3.456 mm against 4.234 mm). The over-basis
+    current flows only in an I_LIM dwell of at most 190 ms. This reopens the closure of item 2 for the TCKE1401NM;
+    the choice is transient-only acceptance or a strap change (copper).
+41. Closed 2026-11-16 (D-94): the operator declined the re-route ("I accept declining"). /CHG_ARM keeps its route
+    under a conditional D-36 exemption; the mandatory cold J1.11-to-R114 pad 2 resistance check carries TODO(verify:
+    first assembled CR). (**Superseded 2026-11-16, D-94:** "TODO(ruling: operator) design J.2 item 83: a D-36
+    exemption for /CHG_ARM at R114, or a re-route (copper) (D-87).")
+42. TODO(ruling: operator) design J.2 item 84: the T-C-04 repetitions on the only U101 (5 of step (1), 5 of step (3),
+    3 fast-trip shorts, at most 1 of step (2)), a spare U101 in the Mouser order, and whether step (2) runs.
+    TODO(verify: Toshiba) safe operating area and repetitive current-limit or TSD rating; the dwell after an SCP or a
+    UVLO trip; whether MODE open also latches an OVP event (sim 2 section 5.8.7).
+43. TODO(ruling: operator) design J.2 item 85: C103 stays 1.0 uF or becomes a 4.7 uF 50 V 0805 part (MPN and DC-bias
+    data TODO(verify); a sim 1 grid re-run before T-C-04).
+44. TODO(ruling: operator) the five opt-in SPARE lines of `bom_2026-11-14/digikey_optional.csv` (D-89); without the
+    GMC21X5R106K50NT line, design section E "2 (+2)" and "5 (+3)" changes to "2" and "5".
+45. TODO(verify) items opened in phase C without an operator decision: STPS2H100A / MBRA2H100T3G package inductance
+    for the A.8 2 nH budget (D-87); Toshiba IMON capacitive load through a series resistor (C129; D-88); the workshop
+    wire gauge of the J-TAP mate against the R170/R171 joints (T-A-05; D-88).
+46. TODO(ruling: operator) the open items of D-96 (design r9-30): CV-phase windows against the no-U101-trip
+    criterion, the in-window brake speed and power limit, the T-B-12 23 W pass criterion, the T-D-12 re-raise
+    deadline (<= 2.5 ms nominal, <= 1.5 ms if the stacked case must pass) and the VESC `l_max_vin` cut level.
+    TODO(verify: TI) the BQ25798 register-to-loop dead time against the 0.21 ms stacked margin (T-B-12, T-B-24).
+    TODO(update: bom_2026-11-14) remove the MB RSDA/RSCL 2.70 kOhm line.

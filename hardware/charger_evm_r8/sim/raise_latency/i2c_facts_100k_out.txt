@@ -1,0 +1,44 @@
+=== (2) Rise time tr = 0.8473 Rp Cb (30-70 %) vs UM10204 Sm 1000 ns / Fm 300 ns
+  config / Cb (W7 m, pF/m) ->                     0.20/50   0.20/100   0.20/130    0.30/50   0.30/100   0.30/130
+  Cb pF                                                70         80         86         75         90         99
+  MB 10k only (Teensy pad pull-up off) (Rp 10.00k)        593        678        729        635        763        839  ns
+  MB 10k || Teensy 22k (Wire default) (Rp 6.88k)        408        466        501        437        524        577  ns
+  MB 10k || EVM 10k (JP30 in, EM6 not done) (Rp 5.00k)        297        339        364        318        381        419  ns
+  MB 10k || EVM 10k || Teensy 22k (Rp 4.07k)          242        276        297        259        311        342  ns
+  PM9 2.7k (reference, rework) (Rp 2.70k)             160        183        197        172        206        226  ns
+  MB 10k only (Teensy pad pull-up off)         Cb max for 1000 ns:  118 pF, for 300 ns:   35 pF; sink at VOL 0.4 V from 3.465 V: 0.31 mA (Sm/Fm limit 3 mA)
+  MB 10k || Teensy 22k (Wire default)          Cb max for 1000 ns:  172 pF, for 300 ns:   52 pF; sink at VOL 0.4 V from 3.465 V: 0.45 mA (Sm/Fm limit 3 mA)
+  MB 10k || EVM 10k (JP30 in, EM6 not done)    Cb max for 1000 ns:  236 pF, for 300 ns:   71 pF; sink at VOL 0.4 V from 3.465 V: 0.61 mA (Sm/Fm limit 3 mA)
+  MB 10k || EVM 10k || Teensy 22k              Cb max for 1000 ns:  290 pF, for 300 ns:   87 pF; sink at VOL 0.4 V from 3.465 V: 0.75 mA (Sm/Fm limit 3 mA)
+  PM9 2.7k (reference, rework)                 Cb max for 1000 ns:  437 pF, for 300 ns:  131 pF; sink at VOL 0.4 V from 3.465 V: 1.14 mA (Sm/Fm limit 3 mA)
+
+=== LPI2C effective SCL period at the Wire 100 kHz setting (rise time stretches the bit)
+  tLOW = (CLKLO+1) x 83.3 ns = 5.00 us (Sm min 4.7 us); tHIGH = (CLKHI+1) x tick = 4.67 us (Sm min 4.0 us)
+  SETHOLD (START hold / repeated-START and STOP setup) = (SETHOLD+1) x tick = 3.42 us (Sm min 4.0-4.7 us, Fm+ 0.26 us); DATAVD = 2.17 us (Sm tVD;DAT max 3.45 us)
+  MB 10k only (Teensy pad pull-up off)     Cb  75 pF: rise to 0.7 VDD  903 ns, SCL_LATENCY 14 -> SCL period 10.83 us (92.3 kHz, x1.083 of 10 us)
+  MB 10k only (Teensy pad pull-up off)     Cb 120 pF: rise to 0.7 VDD 1445 ns, SCL_LATENCY 20 -> SCL period 11.33 us (88.2 kHz, x1.133 of 10 us)
+  MB 10k || Teensy 22k (Wire default)      Cb  75 pF: rise to 0.7 VDD  621 ns, SCL_LATENCY 10 -> SCL period 10.50 us (95.2 kHz, x1.050 of 10 us)
+  MB 10k || Teensy 22k (Wire default)      Cb 120 pF: rise to 0.7 VDD  993 ns, SCL_LATENCY 15 -> SCL period 10.92 us (91.6 kHz, x1.092 of 10 us)
+
+=== (3) Transaction lengths at 100 kHz (r7_calc bit model, 10 us/bit; x0.992 / x1.133 for the LPI2C period range)
+  W(REG06:07) IINDPM, 2 data             38 bits  0.380 ms  (0.377 ms .. 0.431 ms)
+  W(REG03-05) ICHG+VINDPM, 3 data        47 bits  0.470 ms  (0.466 ms .. 0.533 ms)
+  R(REG05), 1 data                       39 bits  0.390 ms  (0.387 ms .. 0.442 ms)
+  R(REG01:02) / R(REG06:07), 2 data      48 bits  0.480 ms  (0.476 ms .. 0.544 ms)
+  R(REG31-34) IBAT/IBUS, 4 data          66 bits  0.660 ms  (0.655 ms .. 0.748 ms)
+  R(REG1B-21) status, 7 data             93 bits  0.930 ms  (0.922 ms .. 1.054 ms)
+  R(REG01-07), 7 data                    93 bits  0.930 ms  (0.922 ms .. 1.054 ms)
+  R(REG00-0A) verify, 11 data           129 bits  1.290 ms  (1.279 ms .. 1.462 ms)
+  one byte + STOP (abort)                10 bits  0.100 ms  (0.099 ms .. 0.113 ms)
+
+=== (3) Edge to raise-writes-complete at 100 kHz (ISR latency excluded unless stated)
+  two writes + 2 t_BUF = 0.859 ms
+  (a) design: ISR + queue priority + cap 0.50 ms (H.23(o))       1.359 ms   (LPI2C-stretched 1.539 ms) = H.23(o) 1.359 ms
+  (a') design, in-flight = longest write W(REG03-05) (H.23(y)(2)) 1.329 ms   (LPI2C-stretched 1.505 ms) 
+  (a'') ISR + priority + abort, idle bus                         0.859 ms   (LPI2C-stretched 0.973 ms) 
+  (e) ISR, FIFO, one ramp group ahead (H.23(y)(2))               2.329 ms   (LPI2C-stretched 2.638 ms) = 2.329 ms
+  (b1) ISR + priority, no cap/abort, R(REG1B-21) in flight       1.789 ms   (LPI2C-stretched 2.027 ms) 
+  (b2) ISR + priority, no cap/abort, R(REG00-0A) unsplit in flight 2.149 ms   (LPI2C-stretched 2.435 ms) 
+  (c1) no pin ISR, polled in 1 kHz timer (+T_TICK_MAX 1.0 ms), cap 2.359 ms   (LPI2C-stretched 2.539 ms) 
+  (c2) polled in loop() (+FR-27 5.0 ms), cap                     6.359 ms   (LPI2C-stretched 6.539 ms) 
+  (d) blocking Wire in loop(): loop 5.0 ms (incl. its own I2C) + writes 5.859 ms   (LPI2C-stretched 5.973 ms) 

@@ -1,0 +1,5 @@
+threshold,typ_noleak_V,typ_typleak25C_V,corner_min_noleak_V,corner_max_noleak_V,corner_min_leak320nA_V,corner_max_leak320nA_V
+UVLO_rise,9.8585,9.8653,9.4443,10.1581,9.0551,10.5480
+UVLO_fall,9.2786,9.2854,8.5925,9.5439,8.2033,9.9338
+OVP_rise,23.1881,23.1949,22.1494,24.4568,21.5884,25.0189
+OVP_fall,21.6272,21.6340,20.4600,22.3653,19.8990,22.9275

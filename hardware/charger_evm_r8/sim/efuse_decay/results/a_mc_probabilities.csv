@@ -1,0 +1,5 @@
+event,fraction_of_4000
+UVLO_rise > 10.2 V (FR-30),0.0698
+OVP_rise < 22.28 V (clamp),0.0703
+OVP_rise > 24.0 V (BQ25798 rec. VBUS max),0.1837
+OVP_rise > 25.2 V (BQ25798 VBUS_OVP min),0.0000

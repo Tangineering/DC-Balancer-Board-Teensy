@@ -1,0 +1,9 @@
+divider,leak,threshold,typ_noleak,min,max
+fitted 845k/64.9k/51.1k,none,UVLO_rise,9.8585,9.4443,10.1581
+fitted 845k/64.9k/51.1k,none,UVLO_fall,9.2786,8.5925,9.5439
+fitted 845k/64.9k/51.1k,none,OVP_rise,23.1881,22.1494,24.4568
+fitted 845k/64.9k/51.1k,none,OVP_fall,21.6272,20.46,22.3653
+fitted 845k/64.9k/51.1k,+-320 nA both pins,UVLO_rise,9.8585,9.0551,10.548
+fitted 845k/64.9k/51.1k,+-320 nA both pins,UVLO_fall,9.2786,8.2033,9.9338
+fitted 845k/64.9k/51.1k,+-320 nA both pins,OVP_rise,23.1881,21.5884,25.0189
+fitted 845k/64.9k/51.1k,+-320 nA both pins,OVP_fall,21.6272,19.899,22.9275

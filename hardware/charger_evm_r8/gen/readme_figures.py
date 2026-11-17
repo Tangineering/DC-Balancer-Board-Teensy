@@ -245,7 +245,7 @@ def fig2_1():
     # VCHG-IN -> pad 10 -> eFuse -> VCHGOUT -> W1/W2 -> EVM J1 VIN -> BQ25798 -> EVM J5 -> W3/W4 -> pads 18/19 -> D-BT-SQ -> pack
     wire(ax, [(44, 56.5), (84, 56.5)], "power")
     pad(56.5, "pad 10")
-    box(ax, 84, 51, 106, 62, "eFuse U101\nTPS26630 + D103", fs=FS_S, weight="bold")
+    box(ax, 84, 51, 106, 62, "eFuse U101\nTCKE1401NM + D103", fs=FS_S, weight="bold")
     wire(ax, [(106, 56.5), (111, 56.5), (111, 88), (139, 88)], "power")
     text(ax, 116.3, 89.4, "VCHGOUT", fs=FS_XS, color=POWER, ha="center")
     text(ax, 129, 89.6, "W1/W2 20 AWG", fs=FS_S, color=POWER)
@@ -303,7 +303,7 @@ def fig2_1():
     wire(ax, [(138, 27), (120, 27)], "logic")
     text(ax, 129, 19.3, "CE_DRV,\nILIM_REL_A/B,\nRFC_OFF,\n3V3 x 2", fs=FS_XS, color=LOGIC)
     text(ax, 129, 28.4, "STAT", fs=FS_XS, color=LOGIC)
-    text(ax, 129, 7.8, "W5 14-way\nribbon (4 GND)", fs=FS_XS, color=INK)
+    text(ax, 129, 7.8, "W5 nine wires\n(3 x 3 pads, 2 GND)", fs=FS_XS, color=INK)
     box(ax, 138, 7, 145, 30, "EIB\nJ201", fs=FS_S, weight="bold", r=0.6)
     wire(ax, [(145, 14), (148.5, 14)], "logic")
     wire(ax, [(148.5, 27), (145, 27)], "logic")
@@ -339,7 +339,7 @@ def fig2_1():
             "T16 pin 35\n  CHG_EFUSE_FLT\nT17 pin 22 CHG_IIN\nT7b, T17r shields")
     text(ax, 4.4, 40.6, taps, fs=FS_S, ha="left", va="top", container=(3.5, 17.5, 22.5, 41.5))
     wire(ax, [(13, 17.5), (13, 9.25), (69.5, 9.25)], "logic", head="both")
-    text(ax, 46, 13.6, "10 tap conductors, cable Molex 2147581101\nTeensy headers: T5, T6, T10, T13, T16, T17\n"
+    text(ax, 46, 13.6, "10 tap conductors, Micro-Fit mate from workshop stock\nTeensy headers: T5, T6, T10, T13, T16, T17\n"
          "(T13, T16, T17 are readbacks to the Teensy)",
          fs=FS_XS, color=LOGIC)
     wire(ax, [(22.5, 28.5), (27, 28.5)], "logic", head="both")
@@ -650,7 +650,7 @@ def fig5_1():
     wire(ax, [(142, 62), (142, 58), (rx, 58)], head="none")
     net(ax, oIL[0] + 1.0, 62.4, "ILIM_REL")
     resistor(ax, rx, 66, "R131A 100 ohm")
-    resistor(ax, rx, 58, "R131B 100 ohm")
+    resistor(ax, rx, 58, "R131B 4.99 kOhm")
     wire(ax, [(rx + 6, 66), (155, 66)])
     wire(ax, [(rx + 6, 58), (155, 58)])
     text(ax, 155.8, 66, "J101.7  ILIM_REL_A", fs=FS_S, ha="left", weight="bold")
@@ -659,7 +659,7 @@ def fig5_1():
     # RFC_OFF -> R132 -> J101.10
     wire(ax, [oRFC, (rx, 44)], head="none")
     net(ax, oRFC[0] + 1.0, 44.4, "RFC_OFF")
-    resistor(ax, rx, 44, "R132 100 ohm")
+    resistor(ax, rx, 44, "R132 4.99 kOhm")
     wire(ax, [(rx + 6, 44), (155, 44)])
     text(ax, 155.8, 44, "J101.10  RFC_OFF", fs=FS_S, ha="left", weight="bold")
     text(ax, 155.8, 40.6, "HIGH removes the FC clamp (Q202)", fs=FS_XS, ha="left", color=GREY)
@@ -680,7 +680,7 @@ def fig5_1():
          "RFC_OFF  = FCC_OFF OR (H1 AND UVB)",
          fs=FS_XS, ha="left", va="top", style="normal")
     text(ax, 1.0, -0.6,
-         "Small grey numbers are package pin numbers (B.8; U107 SOT-23 DBV pin numbers TODO(verify: SCES487I)). "
+         "Small grey numbers are package pin numbers (B.8; U107 SOT-23 DBV pin numbers per SCES487I Table 4-1). "
          "A bridge marks a crossing with no connection; a dot marks a junction. All logic VCC = 3V3 via T6.",
          fs=FS_XS, ha="left", va="bottom", color=GREY)
 

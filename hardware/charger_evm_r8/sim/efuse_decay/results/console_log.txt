@@ -1,0 +1,94 @@
+Sim 5 efuse_decay - simulator: ** ngspice-46
+
+=== PART A: U101 UVLO/OVP band with pin leakage ===
+ngspice vs closed form, max threshold difference over 4074 copies: 1.072e-07 V
+  UVLO_rise  typ 9.8585 V (typ leak 9.8653 V); no leak 9.4443-10.1581 V; with +-320 nA 9.0551-10.5480 V
+  UVLO_fall  typ 9.2786 V (typ leak 9.2854 V); no leak 8.5925-9.5439 V; with +-320 nA 8.2033-9.9338 V
+  OVP_rise   typ 23.1881 V (typ leak 23.1949 V); no leak 22.1494-24.4568 V; with +-320 nA 21.5884-25.0189 V
+  OVP_fall   typ 21.6272 V (typ leak 21.6340 V); no leak 20.4600-22.3653 V; with +-320 nA 19.8990-22.9275 V
+  MC (uniform within limits, n=4000): P(UVLO_rise>10.2)=0.070  P(OVP_rise<22.28)=0.070  P(OVP_rise>24.0)=0.184  P(OVP_rise>25.2)=0.000
+
+=== PART B: FR-12(b1) pin-38 V_chg decay ===
+  2776 cases in 7 decks
+  ngspice vs independent model t(12 V), ON          max relative difference (t >= 50 ms): 3.06e-05; max absolute difference (t < 50 ms): 1.68e-06 s
+  ngspice vs independent model t(12 V), LATCHED_BD  max relative difference (t >= 50 ms): 2.03e-03; max absolute difference (t < 50 ms): 2.27e-04 s
+  ngspice vs independent model t(12 V), LATCHED_ISO max relative difference (t >= 50 ms): 5.33e-06; max absolute difference (t < 50 ms): 3.69e-07 s
+  ngspice vs independent model t(12 V), OVP_START   max relative difference (t >= 50 ms): 8.25e-03; max absolute difference (t < 50 ms): 0.00e+00 s
+  ON          V0 12.50 V all I_evm      t(12 V) 0.005-0.265 s; >0.5 s in 0/216, >1.5 s in 0/216; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 12.50 V I_evm >= floor t(12 V) 0.005-0.074 s; >0.5 s in 0/108, >1.5 s in 0/108; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 16.00 V all I_evm      t(12 V) 0.041-1.864 s; >0.5 s in 36/216, >1.5 s in 6/216; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 16.00 V I_evm >= floor t(12 V) 0.041-0.567 s; >0.5 s in 3/108, >1.5 s in 0/108; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 19.38 V all I_evm      t(12 V) 0.075-3.106 s; >0.5 s in 69/216, >1.5 s in 18/216; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 19.38 V I_evm >= floor t(12 V) 0.075-1.010 s; >0.5 s in 12/108, >1.5 s in 0/108; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 22.28 V all I_evm      t(12 V) 0.104-4.010 s; >0.5 s in 99/216, >1.5 s in 27/216; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  ON          V0 22.28 V I_evm >= floor t(12 V) 0.104-1.368 s; >0.5 s in 24/108, >1.5 s in 0/108; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 12.50 V all I_evm      t(12 V) 0.006-0.150 s; >0.5 s in 0/360, >1.5 s in 0/360; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 12.50 V I_evm >= floor t(12 V) 0.006-0.094 s; >0.5 s in 0/180, >1.5 s in 0/180; worst: Cin 28.4u Cevm 20.6u Ievm 0.391m IQ 0.000m Vf 0.55 OVPF nan
+  LATCHED_BD  V0 16.00 V all I_evm      t(12 V) 0.050-1.775 s; >0.5 s in 126/360, >1.5 s in 4/360; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 16.00 V I_evm >= floor t(12 V) 0.050-0.663 s; >0.5 s in 36/180, >1.5 s in 0/180; worst: Cin 28.4u Cevm 20.6u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 19.38 V all I_evm      t(12 V) 0.090-3.033 s; >0.5 s in 225/360, >1.5 s in 36/360; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 19.38 V I_evm >= floor t(12 V) 0.090-1.105 s; >0.5 s in 96/180, >1.5 s in 0/180; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 22.28 V all I_evm      t(12 V) 0.124-3.947 s; >0.5 s in 258/360, >1.5 s in 69/360; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+  LATCHED_BD  V0 22.28 V I_evm >= floor t(12 V) 0.124-1.452 s; >0.5 s in 114/180, >1.5 s in 0/180; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+  OVP_START   V0 22.28 V all I_evm      t(12 V) 0.104-4.021 s; >0.5 s in 198/432, >1.5 s in 54/432; worst: Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.70 OVPF 19.899
+  OVP_START   V0 22.28 V I_evm >= floor t(12 V) 0.104-1.368 s; >0.5 s in 48/216, >1.5 s in 0/216; worst: Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.55 OVPF 19.899
+  LATCHED_ISO V0 12.50 V all I_evm      t(12 V) 0.006-0.094 s; >0.5 s in 0/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 12.50 V I_evm >= floor t(12 V) 0.006-0.094 s; >0.5 s in 0/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 16.00 V all I_evm      t(12 V) 0.050-0.663 s; >0.5 s in 2/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 16.00 V I_evm >= floor t(12 V) 0.050-0.663 s; >0.5 s in 2/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 19.38 V all I_evm      t(12 V) 0.090-1.105 s; >0.5 s in 5/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 19.38 V I_evm >= floor t(12 V) 0.090-1.105 s; >0.5 s in 5/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 22.28 V all I_evm      t(12 V) 0.124-1.427 s; >0.5 s in 6/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  LATCHED_ISO V0 22.28 V I_evm >= floor t(12 V) 0.124-1.427 s; >0.5 s in 6/10, >1.5 s in 0/10; worst: Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+  t(3 V) ON          all I_evm      worst 12.865 s; >5 s 60/864; >6.5 s 36/864; V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40
+  t(3 V) ON          I_evm >= floor worst 4.387 s; >5 s 0/432; >6.5 s 0/432; V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.55
+  t(3 V) LATCHED_BD  all I_evm      worst 12.957 s; >5 s 134/1440; >6.5 s 72/1440; V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40
+  t(3 V) LATCHED_BD  I_evm >= floor worst 4.649 s; >5 s 0/720; >6.5 s 0/720; V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40
+  t(3 V) OVP_START   all I_evm      worst 12.872 s; >5 s 42/432; >6.5 s 24/432; V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40
+  t(3 V) OVP_START   I_evm >= floor worst 4.413 s; >5 s 0/216; >6.5 s 0/216; V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.70
+  t(3 V) LATCHED_ISO all I_evm      worst 4.624 s; >5 s 0/40; >6.5 s 0/40; V0 22.28 Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan
+  t(3 V) LATCHED_ISO I_evm >= floor worst 4.624 s; >5 s 0/40; >6.5 s 0/40; V0 22.28 Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan
+  1.5 s boundary at full C_evm 51.4 uF: I_evm >= 0.351 mA (worst variant); at I_evm = 0: C_evm <= 1.4 uF
+  slope 0.2-0.4 s, undecided healthy cases (all I_evm, n=1230): slowest -2.294 V/s (LATCHED_BD V0 16.00 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.70)
+  slope 0.2-0.4 s, undecided healthy cases (I_evm >= floor, n=433): slowest -6.094 V/s (LATCHED_BD V0 16.00 Cin 28.4u Cevm 20.6u Ievm 0.391m IQ 0.000m Vf 0.40)
+  slope 0.2-0.4 s, undecided healthy cases (I_evm = 0, n=291): slowest -2.294 V/s (LATCHED_BD V0 16.00 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.70)
+
+=== PART C: FR-12(a2) D-MT-EN short check ===
+  node set as-built, gain fit 0.48 R 8.19k                  V_on 1.2710 R 8190: static ratio 0.8480 at 15.93 V, small-signal gain 0.4800
+  node set as-built, dip fit V_on 1.19 V R 9.2k             V_on 1.1900 R 9200: static ratio 0.8344 at 15.93 V, small-signal gain 0.5091
+  node set as-built, dip fit V_on 1.25 V R 9.5k             V_on 1.2500 R 9500: static ratio 0.8532 at 15.93 V, small-signal gain 0.5171
+  node set as-built, gain fit R 13k                         V_on 1.1230 R 13000: static ratio 0.8480 at 15.93 V, small-signal gain 0.5944
+  node set as-built, gain fit R 17k                         V_on 0.9999 R 17000: static ratio 0.8480 at 15.93 V, small-signal gain 0.6571
+  node set as-built, open-cathode est. R 3.5k (ASSUMPTION)  V_on 1.4153 R 3500: static ratio 0.8480 at 15.93 V, small-signal gain 0.2829
+  node set repaired, healthy TL431 REF 4 uA                 V_on - R -: static ratio 0.9802 at 15.93 V, small-signal gain 1.0000
+  shorted  V_fc 0, V_batt 7.4                     as-built, gain fit 0.48 R 8.19k                  ratio 0.724-0.763
+  shorted  V_fc 0, V_batt 7.4                     as-built, dip fit V_on 1.19 V R 9.2k             ratio 0.700-0.740
+  shorted  V_fc 0, V_batt 7.4                     as-built, dip fit V_on 1.25 V R 9.5k             ratio 0.733-0.770
+  shorted  V_fc 0, V_batt 7.4                     as-built, gain fit R 13k                         ratio 0.725-0.761
+  shorted  V_fc 0, V_batt 7.4                     as-built, gain fit R 17k                         ratio 0.725-0.760
+  shorted  V_fc 0, V_batt 7.4                     as-built, open-cathode est. R 3.5k (ASSUMPTION)  ratio 0.723-0.765
+  shorted  V_fc 0, V_batt 7.4                     repaired, healthy TL431 REF 4 uA                 ratio 1.000-1.000
+  shorted  V_fc 0, V_batt 7.9                     as-built, gain fit 0.48 R 8.19k                  ratio 0.708-0.750
+  shorted  V_fc 0, V_batt 7.9                     as-built, dip fit V_on 1.19 V R 9.2k             ratio 0.682-0.726
+  shorted  V_fc 0, V_batt 7.9                     as-built, dip fit V_on 1.25 V R 9.5k             ratio 0.717-0.758
+  shorted  V_fc 0, V_batt 7.9                     as-built, gain fit R 13k                         ratio 0.709-0.748
+  shorted  V_fc 0, V_batt 7.9                     as-built, gain fit R 17k                         ratio 0.709-0.748
+  shorted  V_fc 0, V_batt 7.9                     as-built, open-cathode est. R 3.5k (ASSUMPTION)  ratio 0.706-0.753
+  shorted  V_fc 0, V_batt 7.9                     repaired, healthy TL431 REF 4 uA                 ratio 1.000-1.000
+  shorted  V_fc 0, V_batt 8.4                     as-built, gain fit 0.48 R 8.19k                  ratio 0.690-0.736
+  shorted  V_fc 0, V_batt 8.4                     as-built, dip fit V_on 1.19 V R 9.2k             ratio 0.661-0.711
+  shorted  V_fc 0, V_batt 8.4                     as-built, dip fit V_on 1.25 V R 9.5k             ratio 0.699-0.745
+  shorted  V_fc 0, V_batt 8.4                     as-built, gain fit R 13k                         ratio 0.690-0.734
+  shorted  V_fc 0, V_batt 8.4                     as-built, gain fit R 17k                         ratio 0.690-0.733
+  shorted  V_fc 0, V_batt 8.4                     as-built, open-cathode est. R 3.5k (ASSUMPTION)  ratio 0.688-0.739
+  shorted  V_fc 0, V_batt 8.4                     repaired, healthy TL431 REF 4 uA                 ratio 1.000-1.000
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 as-built, gain fit 0.48 R 8.19k                  ratio 0.479-0.525
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 as-built, dip fit V_on 1.19 V R 9.2k             ratio 0.508-0.510
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 as-built, dip fit V_on 1.25 V R 9.5k             ratio 0.516-0.541
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 as-built, gain fit R 13k                         ratio 0.593-0.596
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 as-built, gain fit R 17k                         ratio 0.656-0.658
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 as-built, open-cathode est. R 3.5k (ASSUMPTION)  ratio 0.286-0.530
+  shorted  V_fc 13.0 (reads 12.34), V_batt 7.4-8.4 repaired, healthy TL431 REF 4 uA                 ratio 0.998-1.001
+  open switch: worst ratio + noise bound = 0.0089
+
+Done. Outputs in C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\hardware\charger_evm_r8\sim\efuse_decay\results

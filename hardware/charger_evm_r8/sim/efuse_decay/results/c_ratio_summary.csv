@@ -1,0 +1,29 @@
+scenario,node_set,ratio_min_shorted,ratio_max_shorted
+"V_fc 0, V_batt 7.4","as-built, gain fit 0.48 R 8.19k",0.724,0.763
+"V_fc 0, V_batt 7.4","as-built, dip fit V_on 1.19 V R 9.2k",0.700,0.740
+"V_fc 0, V_batt 7.4","as-built, dip fit V_on 1.25 V R 9.5k",0.733,0.770
+"V_fc 0, V_batt 7.4","as-built, gain fit R 13k",0.725,0.761
+"V_fc 0, V_batt 7.4","as-built, gain fit R 17k",0.725,0.760
+"V_fc 0, V_batt 7.4","as-built, open-cathode est. R 3.5k (ASSUMPTION)",0.723,0.765
+"V_fc 0, V_batt 7.4","repaired, healthy TL431 REF 4 uA",1.000,1.000
+"V_fc 0, V_batt 7.9","as-built, gain fit 0.48 R 8.19k",0.708,0.750
+"V_fc 0, V_batt 7.9","as-built, dip fit V_on 1.19 V R 9.2k",0.682,0.726
+"V_fc 0, V_batt 7.9","as-built, dip fit V_on 1.25 V R 9.5k",0.717,0.758
+"V_fc 0, V_batt 7.9","as-built, gain fit R 13k",0.709,0.748
+"V_fc 0, V_batt 7.9","as-built, gain fit R 17k",0.709,0.748
+"V_fc 0, V_batt 7.9","as-built, open-cathode est. R 3.5k (ASSUMPTION)",0.706,0.753
+"V_fc 0, V_batt 7.9","repaired, healthy TL431 REF 4 uA",1.000,1.000
+"V_fc 0, V_batt 8.4","as-built, gain fit 0.48 R 8.19k",0.690,0.736
+"V_fc 0, V_batt 8.4","as-built, dip fit V_on 1.19 V R 9.2k",0.661,0.711
+"V_fc 0, V_batt 8.4","as-built, dip fit V_on 1.25 V R 9.5k",0.699,0.745
+"V_fc 0, V_batt 8.4","as-built, gain fit R 13k",0.690,0.734
+"V_fc 0, V_batt 8.4","as-built, gain fit R 17k",0.690,0.733
+"V_fc 0, V_batt 8.4","as-built, open-cathode est. R 3.5k (ASSUMPTION)",0.688,0.739
+"V_fc 0, V_batt 8.4","repaired, healthy TL431 REF 4 uA",1.000,1.000
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","as-built, gain fit 0.48 R 8.19k",0.479,0.525
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","as-built, dip fit V_on 1.19 V R 9.2k",0.508,0.510
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","as-built, dip fit V_on 1.25 V R 9.5k",0.516,0.541
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","as-built, gain fit R 13k",0.593,0.596
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","as-built, gain fit R 17k",0.656,0.658
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","as-built, open-cathode est. R 3.5k (ASSUMPTION)",0.286,0.530
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4","repaired, healthy TL431 REF 4 uA",0.998,1.001

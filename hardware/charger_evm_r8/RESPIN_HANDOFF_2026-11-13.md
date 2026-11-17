@@ -7,6 +7,17 @@ This document is the input for any routing session that changes the CR (`cr/cr.k
 has no authorized stock. Section 3 inventories every edit made to the boards after their scripted generation, because a
 plain regeneration loses them. A respin starts from the current boards and edits them in place (section 3.0, point 4).
 
+**Amended 2026-11-14.** D-67 (operator ruling 2026-11-13) fitted the Toshiba TCKE1401NM on the unchanged footprint, so
+no respin is required for U101. D-66 is committed (`eb80156`), and D-67 to D-69 are committed up to `014c745`. The
+2026-11-14 review round added in-place edits that a respin must also keep (`LAYOUT_DECISIONS.md` D-70 to D-84). Unlike
+the edits of section 3.1.2, they are idempotent scripts with a recorded order: section 3.3 step J and
+`LAYOUT_DECISIONS.md` section 2.
+
+**Amended 2026-11-15.** Phase C of the 2026-11-14 round (`LAYOUT_DECISIONS.md` D-85 to D-92) added two more
+idempotent silkscreen scripts, `gen/cr_silk_fix_r4.py` (D-85) and `gen/eib_silk_fix_r3.py` (D-86), and Note fields
+written by `gen/sync_fields.py --add-missing` (D-88). Section 3.3 step J lists them in order. A respin must keep them
+as well.
+
 ## 2. U101 has no authorized stock
 
 ### 2.1 Stock
@@ -22,6 +33,13 @@ datasheet. Stock was read on Digi-Key and on findchips.com (Mouser, Newark) on 2
 |---|---|---|---|---|
 | Toshiba TCKE1401NM,R1F | VQFN24D 4 x 4 mm, 0.5 mm | Yes: same pin map (Fig 5.1 against the B.8 U101 row); the fitted land covers the Toshiba land (Fig 13.2) | Mouser 1,984 from 1 piece ($4.61, 757-TCKE1401NMR1F); Digi-Key 3,000 as a 3,000-piece reel only | OVP reference 1.18-1.298 V gives a 22.18-24.39 V cutoff against the 22.6-23.6 V band; I_LIM about +-17 % (1.84-2.59 A at 9 kOhm); UVLO rising maximum 10.19 V against the FR-30 10.2 V threshold; IMON gain 22.3-33.5 uA/A; IN absolute maximum 80 V (better than 67 V) |
 | TI TPS26601RHFR / RHFT | VQFN-24 RHF 5 x 4 mm, 0.5 mm | No (respin) | Mouser 562 (RHFR); Newark 89 (RHFT) | 150 mOhm; I_CB ceiling about 2.2 A; the circuit breaker latches after 4 ms instead of 129-202 ms; IN absolute maximum 62 V; IMON 78.28 uA/A |
+
+**Amended 2026-11-15 (D-67, D-91; `sim/efuse_decay/RESULTS.md` Table 1).** The TCKE1401NM row gives the search
+figures of 2026-11-13, for the divider of that time and without pin leakage. As fitted (R102 845 kOhm, R103
+64.9 kOhm, R104 51.1 kOhm), OVP rising is 21.588-25.019 V and UVLO rising 9.055-10.548 V with pin leakage; the UVLO
+maximum lies 0.348 V above the FR-30 10.2 V threshold. I_LIM at R101 8.45 kOhm is about 1.97-2.77 A (an
+extrapolation, D-67). The IMON gain is 17.58-38.22 uA/A at 0.6-1 A and unspecified below 0.6 A (TCKE1401NM DS
+Rev. 3.0 Table 10.2).
 | TI TPS26600PWPT | HTSSOP-16, 0.65 mm | No (respin) | 0 | no timed latch (auto-retry or TSD-only latch) |
 | Analog Devices MAX17613A/B/C | TQFN-20 4 x 4 mm | No (respin) | Mouser 79 (B); Newark 1,352 (C) | 130-230 mOhm; FLAG does not cover OV/UV |
 | Analog Devices MAX17525 / MAX17526A | TQFN-20 5 x 5 mm | No (respin) | Mouser 3,147 (MAX17525) | the OVP band fails (1.18-1.27 V reference) |
@@ -56,6 +74,10 @@ The deltas below were measured every board delta below by parsing `cr/cr.kicad_p
    - the BOM files, and the `fab/cr_2026-11-13d/` and `fab/eib_2026-11-13b/` packages.
 
    A `git checkout`, `git stash` or regeneration loses all of it. Commit it before any respin work starts.
+
+   **Resolved 2026-11-14 (REVIEW DOC-10):** D-66 is committed in `eb80156` ("J101/J201 as 3x3 PTH wire pads (D-66);
+   CR and EIB re-exported"); `gen/swap_wire9.py` and the other D-66 scripts are tracked. This point no longer
+   applies.
 2. **No scripted sequence reproduces the current CR.** There are two breaks:
    - the operator's KiCad cleanup `547dc11` (manual);
    - one manual /GND via nudge in D-66.
@@ -157,7 +179,9 @@ The operator also made /GND via changes. 13 vias were removed and 10 added (449 
 
 **What a respin must do:** keep the result. Re-running the script on any other board aborts at its assert. For a fresh route, the equivalent rule is to forbid same-net via pairs that only jog on In2 for under about 1.4 mm, and to keep /GND vias off J101 pads and ≥ 0.1 mm from other-net mask openings.
 
-#### 3.1.4 D-66, uncommitted working tree (J101 FTSH header → 3 × 3 PTH wire pads)
+#### 3.1.4 D-66, committed in `eb80156` (J101 FTSH header → 3 × 3 PTH wire pads)
+
+(**Superseded 2026-11-14:** "uncommitted working tree" in this heading.)
 
 **Board delta, `f56cd29` → working tree.** Segments went from 699 to 692 (43 deleted, 36 added), track length from 838.1 to 818.7 mm, and vias from **428 to 420** by count in the file. LAYOUT_DECISIONS D-66 says "428 to 417". That figure probably predates the three `wire9_stitch` vias; correct it.
 
@@ -209,6 +233,11 @@ The last finishing-router output is `cr/finish_routes.json` and `cr/finish_dump.
 
 #### 3.1.5 BOM substitutions (`bom_2026-11-13/README.md` section 4, uncommitted)
 
+**Amended 2026-11-14 (`LAYOUT_DECISIONS.md` D-82).** The substitutes of the table below are now in `gen/netlist.py`,
+and `gen/sync_fields.py` wrote them into the schematic and board fields; the statement that the MPN fields still name
+the original parts is superseded. U101 is the TCKE1401NM from Mouser (D-67). `bom_2026-11-14/` is the ordering set
+(D-83). C102b has a 2.50 mm thickness in its Digi-Key description (`bom_2026-11-14/README.md` Table 1).
+
 No footprint or board change. Every substitute has the same package, and **the schematic and board MPN fields still name the original parts**. The substitutes exist only in `gen/bom_split.py` and the BOM CSVs.
 
 Max thickness of each substitute (from `bom_split.py`):
@@ -223,7 +252,7 @@ Max thickness of each substitute (from `bom_split.py`):
 
 The original part thicknesses are not recorded in the BOM README.
 
-There is no board height limit (operator ruling 2026-11-10), so no layout action follows. A respin should decide one thing: either move the substitute MPNs into `gen/netlist.py` and re-run `sync_fields.py`, or keep them BOM-only. Note that `TPS26630RGER` (U101) is held out of the Digi-Key file for lack of stock.
+There is no board height limit (operator ruling 2026-11-10), so no layout action follows. D-82 moved the substitute MPNs into `gen/netlist.py`, and `gen/sync_fields.py` wrote them onto the boards; U101 is the TCKE1401NM, ordered from Mouser (`bom_2026-11-14/mouser_import.csv`; D-67). (**Superseded 2026-11-15, REVIEW R2-DOC-14:** "A respin should decide one thing: either move the substitute MPNs into `gen/netlist.py` and re-run `sync_fields.py`, or keep them BOM-only. Note that `TPS26630RGER` (U101) is held out of the Digi-Key file for lack of stock.")
 
 ### 3.2 EIB edits
 
@@ -270,7 +299,22 @@ git checkout -- cr/cr.kicad_pro   # then refill zones with the board loaded as c
 "$PY" gen/via_merge_cr.py <in.kicad_pcb> <out.kicad_pcb>       # = f56cd29
 # G. D-66: section 3.1.4, steps 1-7 (unrecorded arguments)
 # H. BREAK 2: /GND via (36.725, 51.025) -> (36.605, 51.025), manual
-# I. Checks and package
+# H2. D-67: gen/netlist.py + gen/sch.py cr cr + ERC + netlist export; gen/sync_fields.py cr/cr.kicad_pcb cr/cr.net;
+#     the eight U101 no-connect nets renamed on the board (method in LAYOUT_DECISIONS D-67, no script recorded)
+# H3. D-69: gen/fplib.py vqfn24 apertures, then
+"$PY" gen/u101_paste_swap.py                                   # = 014c745 board
+# J. 2026-11-14 in-place edits (LAYOUT_DECISIONS section 2; reproduced from 014c745 exactly on a scratch copy)
+"$PY" gen/cr_pin1_marks.py
+"$PY" gen/cr_silk_refs_r2.py
+"$PY" gen/cr_wire_labels.py
+"$PY" gen/cr_lead_labels.py
+"$PY" gen/cr_j1_pin18_solid.py      # also after any make_board.sh (it overwrites cr/cr.kicad_dru)
+"$PY" gen/cr_stackup.py
+"$PY" gen/cr_silk_fix_r3.py
+"$PY" gen/sync_fields.py --add-missing cr/cr.kicad_pcb cr/cr.net   # after gen/sch.py cr cr, ERC and netlist export (D-82, D-88)
+"$PY" gen/cr_silk_fix_r4.py         # D-85, added 2026-11-15
+"$PY" gen/cr_silk_refs_report.py    # writes cr/silk_refs.md
+# I. Checks and package (export.sh now runs gen/npth_check.py after DRC, D-77)
 (cd gen && "$PY" check_constraints.py cr ../cr > ../cr/constraint_check.md)
 "/c/Program Files/KiCad/9.0/bin/kicad-cli.exe" pcb drc --severity-all --schematic-parity -o cr/drc.rpt cr/cr.kicad_pcb
 bash gen/export.sh cr <date> && "$PY" gen/fab_readme.py cr <date> [<reference package dir>]
@@ -287,6 +331,18 @@ bash gen/make_eib_all.sh   # make_board eib; route.py eib (Freerouting 2.5.0);
 # D-63: section 3.2 steps (1)-(5), two of them inline
 # D-64: inline reference visibility, then silk_refs.py
 # D-66: section 3.2, unrecorded arguments
+# D-68: rule from gen/eib_pour_rules.kicad_dru (appended by make_board.sh), refill; one via deleted (one-off)
+# J. 2026-11-14 in-place edits (LAYOUT_DECISIONS section 2; from 014c745 identical except six F.Fab field positions)
+"$PY" gen/eib_j201_pour_clearance.py
+"$PY" gen/eib_dnp_paste.py           # not reproduced by pcbbuild.py; always re-run
+"$PY" gen/eib_pin1_marks.py
+"$PY" gen/eib_board_marking.py
+"$PY" gen/eib_wire_labels.py
+"$PY" gen/eib_silk_refs_r2.py eib/silk_refs.md
+"$PY" gen/eib_stackup.py
+"$PY" gen/eib_board_marking.py && "$PY" gen/eib_silk_refs_r2.py eib/silk_refs.md
+"$PY" gen/sync_fields.py --add-missing eib/eib.kicad_pcb eib/eib.net   # after gen/sch.py eib eib, ERC and netlist export (D-88)
+"$PY" gen/eib_silk_fix_r3.py         # D-86, added 2026-11-15; always last
 # Checks and package as for the CR
 ```
 
@@ -299,12 +355,18 @@ bash gen/make_eib_all.sh   # make_board eib; route.py eib (Freerouting 2.5.0);
 - Step G: the arguments are unrecorded.
 - Step H: manual.
 
+**Step J (2026-11-15):** `gen/cr_silk_refs_r2.py` stops on the current CR, so step J replays from `014c745` only; a
+re-run of `gen/cr_lead_labels.py` on the current CR removes the W2 "GND" text; `gen/eib_silk_refs_r2.py
+eib/silk_refs.md` removes the hand-kept sections of `eib/silk_refs.md` (`LAYOUT_DECISIONS.md` section 2).
+
 **EIB:**
 - Freerouting repeatability is not verified.
 - D-63 has two inline island-removal toggles, and D-64 has the inline visibility step.
 - The D-66 arguments are unrecorded.
 
-**Conclusion:** the only lossless base for a respin is the current working-tree `cr/cr.kicad_pcb` (after D-66 is committed), edited in place.
+**Conclusion:** the only lossless base for a respin is the current working-tree `cr/cr.kicad_pcb` (after D-66 is committed), edited in place. (**Amended 2026-11-14:** D-66 is committed (`eb80156`). Step J of sections 3.3.1 and 3.3.2 does not break
+the sequence: its scripts are idempotent and reproduce the 2026-11-14 boards from `014c745`. The breaks of the
+2026-11-13 steps stay.)
 
 ### Appendix A. Segments added in `547dc11` (In2.Cu, 0.1524 mm, KiCad frame)
 

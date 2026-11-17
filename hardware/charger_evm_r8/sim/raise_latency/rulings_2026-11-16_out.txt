@@ -1,0 +1,74 @@
+Sim 7 supplement, rulings 2026-11-16: C_VMOT 1.0 mF, IINDPM at the edge 0.40 A, budget 3.5 ms, V_H1R 18.05 V
+
+=== Budget table at VINDPM 19.0 V ===
+VINDPM 19.00 V: corners {'lo': 19.38, 'nom': 19.0, 'd310': 19.0, 'hi': 18.62}; ratchet trigger 19.570 V; stage 1 {'lo': 18.564, 'nom': 18.2, 'd310': 18.2, 'hi': 17.836}
+  Nominal (eff 0.9/0.97, 0.1 ms lag)                         20.500 V: 4.11 ms (lo, CP 18.9 W) | 21.588 V: 6.15 ms (lo, CP 18.9 W) margin +2.65   [41 s]
+  Acc 0.83 + TCR (H1 rise 18.127 V)                          20.500 V: 3.88 ms (lo, CP 18.9 W) | 21.588 V: 5.85 ms (lo, CP 18.9 W) margin +2.35   [38 s]
+  Acc 0.83 + TCR + 1 ms charger lag                          20.500 V: 3.07 ms (lo, CP 18.9 W) | 21.588 V: 5.04 ms (lo, CP 18.9 W) margin +1.54   [26 s]
+  12 A brake from 3.1 m/s                                    20.500 V: 3.43 ms (lo, 12A 3.1->1) | 21.588 V: 5.44 ms (lo, 12A 3.1->1) margin +1.94   [14 s]
+  25 A State-98 brake 2.5 -> 1 m/s                           20.500 V: 3.16 ms (lo, trap25A 2.5->1) | 21.588 V: 5.16 ms (lo, trap25A 2.5->1) margin +1.66   [12 s]
+  VBUS 17.5 V at the edge (H1 rise 19.25 V)                  20.500 V: 2.25 ms (lo, ML0157 47.30) | 21.588 V: 4.29 ms (lo, CP 18.9 W) margin +0.79   [22 s]
+  12 A from 3.5 m/s, acc 0.83 + TCR, nom/d310/hi             20.500 V: 2.23 ms (nom, 12A 3.5->1) | 21.588 V: 3.78 ms (nom, 12A 3.5->1) margin +0.28   [14 s]
+  eff 1.0 + 1 ms lag + acc 0.83 + TCR, d310                  20.500 V: 2.16 ms (d310, ML0157 47.30) | 21.588 V: 3.71 ms (d310, ML0157 47.30) margin +0.21   [17 s]
+  capacity-limited cases (0.00 ms = crossing at T_lat = 0):
+  12 A brake from 3.25 m/s                                   20.500 V: 0.00 ms (lo, 12A 3.25->1) | 21.588 V: 0.00 ms (lo, 12A 3.25->1) margin -   [10 s]
+  eff 1.0 + 1 ms lag + acc 0.83 + TCR, all corners           20.500 V: 0.00 ms (lo, ML0157 47.30) | 21.588 V: 0.00 ms (lo, ML0157 47.30) margin -   [18 s]
+  CP 23 W, lo corner                                         20.500 V: 0.00 ms (lo, CP 23 W) | 21.588 V: 0.00 ms (lo, CP 23 W) margin -   [1 s]
+  CP 23 W, nom corner                                        20.500 V: 0.00 ms (nom, CP 23 W) | 21.588 V: 0.00 ms (nom, CP 23 W) margin -   [2 s]
+  CP 23 W, d310 corner                                       20.500 V: 0.00 ms (d310, CP 23 W) | 21.588 V: 0.00 ms (d310, CP 23 W) margin -   [2 s]
+  CP 23 W, hi corner                                         20.500 V: 3.06 ms (hi, CP 23 W) | 21.588 V: 4.55 ms (hi, CP 23 W) margin +1.05   [17 s]
+  regen-armed t_d limit 20.500 V: 2.45 ms (lo, CP 18.9 W)
+  regen-armed t_d limit 21.588 V: 3.68 ms (lo, CP 18.9 W)
+  T_lat 3.5 ms peaks (V): lo/ML0157 20.158, lo/CP 20.158, lo/step 18.762, nom/ML0157 20.144, nom/CP 20.144, nom/step 18.762, d310/ML0157 20.144, d310/CP 20.144, d310/step 18.762, hi/ML0157 20.137, hi/CP 20.136, hi/step 18.762
+  T_lat 3.5 ms E_harv (J): lo/ML0157 4.3986, lo/CP 10.7852, lo/step 1.9714, nom/ML0157 4.4077, nom/CP 10.7888, nom/step 1.9796, d310/ML0157 4.4077, d310/CP 10.7888, d310/step 1.9796, hi/ML0157 4.4166, hi/CP 10.7921, hi/step 1.9878
+  VESC cut reference (threshold 21.35 V, nominal):
+  Nominal, cut at 21.35 V                                    21.350 V: 5.69 ms (lo, CP 18.9 W)   [37 s]
+
+=== Budget table at VINDPM 18.4 V ===
+VINDPM 18.40 V: corners {'lo': 18.768, 'nom': 18.4, 'd310': 18.4, 'hi': 18.032}; ratchet trigger 18.958 V; stage 1 {'lo': 18.564, 'nom': 18.2, 'd310': 18.2, 'hi': 17.836}
+  Nominal (eff 0.9/0.97, 0.1 ms lag)                         20.500 V: 4.11 ms (lo, CP 18.9 W) | 21.588 V: 6.15 ms (lo, CP 18.9 W) margin +2.65   [41 s]
+  Acc 0.83 + TCR (H1 rise 18.127 V)                          20.500 V: 3.88 ms (lo, CP 18.9 W) | 21.588 V: 5.85 ms (lo, CP 18.9 W) margin +2.35   [37 s]
+  Acc 0.83 + TCR + 1 ms charger lag                          20.500 V: 3.07 ms (lo, CP 18.9 W) | 21.588 V: 5.04 ms (lo, CP 18.9 W) margin +1.54   [26 s]
+  12 A brake from 3.1 m/s                                    20.500 V: 3.43 ms (lo, 12A 3.1->1) | 21.588 V: 5.44 ms (lo, 12A 3.1->1) margin +1.94   [14 s]
+  25 A State-98 brake 2.5 -> 1 m/s                           20.500 V: 3.16 ms (lo, trap25A 2.5->1) | 21.588 V: 5.16 ms (lo, trap25A 2.5->1) margin +1.66   [12 s]
+  VBUS 17.5 V at the edge (H1 rise 19.25 V)                  20.500 V: 2.25 ms (lo, ML0157 47.30) | 21.588 V: 4.29 ms (lo, CP 18.9 W) margin +0.79   [22 s]
+  12 A from 3.5 m/s, acc 0.83 + TCR, nom/d310/hi             20.500 V: 2.23 ms (nom, 12A 3.5->1) | 21.588 V: 3.78 ms (nom, 12A 3.5->1) margin +0.28   [14 s]
+  eff 1.0 + 1 ms lag + acc 0.83 + TCR, d310                  20.500 V: 2.16 ms (d310, ML0157 47.30) | 21.588 V: 3.71 ms (d310, ML0157 47.30) margin +0.21   [17 s]
+  capacity-limited cases (0.00 ms = crossing at T_lat = 0):
+  12 A brake from 3.25 m/s                                   20.500 V: 0.00 ms (lo, 12A 3.25->1) | 21.588 V: 0.00 ms (lo, 12A 3.25->1) margin -   [10 s]
+  eff 1.0 + 1 ms lag + acc 0.83 + TCR, all corners           20.500 V: 0.00 ms (lo, ML0157 47.30) | 21.588 V: 0.00 ms (lo, ML0157 47.30) margin -   [18 s]
+  CP 23 W, lo corner                                         20.500 V: 0.00 ms (lo, CP 23 W) | 21.588 V: 0.00 ms (lo, CP 23 W) margin -   [1 s]
+  CP 23 W, nom corner                                        20.500 V: 0.00 ms (nom, CP 23 W) | 21.588 V: 0.00 ms (nom, CP 23 W) margin -   [2 s]
+  CP 23 W, d310 corner                                       20.500 V: 0.00 ms (d310, CP 23 W) | 21.588 V: 0.00 ms (d310, CP 23 W) margin -   [2 s]
+  CP 23 W, hi corner                                         20.500 V: 3.06 ms (hi, CP 23 W) | 21.588 V: 4.55 ms (hi, CP 23 W) margin +1.05   [17 s]
+  regen-armed t_d limit 20.500 V: 2.45 ms (lo, CP 18.9 W)
+  regen-armed t_d limit 21.588 V: 3.68 ms (lo, CP 18.9 W)
+  T_lat 3.5 ms peaks (V): lo/ML0157 20.158, lo/CP 20.158, lo/step 18.762, nom/ML0157 20.144, nom/CP 20.144, nom/step 18.762, d310/ML0157 20.144, d310/CP 20.144, d310/step 18.762, hi/ML0157 20.137, hi/CP 20.136, hi/step 18.762
+  T_lat 3.5 ms E_harv (J): lo/ML0157 4.4128, lo/CP 10.7899, lo/step 1.9714, nom/ML0157 4.4216, nom/CP 10.7940, nom/step 1.9796, d310/ML0157 4.4216, d310/CP 10.7940, d310/step 1.9796, hi/ML0157 4.4300, hi/CP 10.7973, hi/step 1.9878
+  VESC cut reference (threshold 21.35 V, nominal):
+  Nominal, cut at 21.35 V                                    21.350 V: 5.69 ms (lo, CP 18.9 W)   [37 s]
+
+=== T-D-12 false restore ===
+VINDPM 19.00 V: corners {'lo': 19.38, 'nom': 19.0, 'd310': 19.0, 'hi': 18.62}; ratchet trigger 19.570 V; stage 1 {'lo': 18.564, 'nom': 18.2, 'd310': 18.2, 'hi': 17.836}
+  static maximum, VINDPM 19.0 V: 19.7144 V (design figure 19.72 V used)
+  T-D-12, VINDPM 19.0 V, start 19.720 V, nominal             21.588 V: 3.52 ms (lo, CP 18.9 W)   [18 s]
+    -> re-raise deadline after the 1.0 ms detect tick: 2.52 ms
+  T-D-12, VINDPM 19.0 V, start 19.720 V, acc 0.83 + 1 ms lag 21.588 V: 2.59 ms (lo, CP 18.9 W)   [16 s]
+    -> re-raise deadline after the 1.0 ms detect tick: 1.59 ms
+VINDPM 18.40 V: corners {'lo': 18.768, 'nom': 18.4, 'd310': 18.4, 'hi': 18.032}; ratchet trigger 18.958 V; stage 1 {'lo': 18.564, 'nom': 18.2, 'd310': 18.2, 'hi': 17.836}
+  static maximum, VINDPM 18.4 V: 19.1024 V
+  T-D-12, VINDPM 18.4 V, start 19.102 V, nominal             21.588 V: 4.53 ms (lo, CP 18.9 W)   [22 s]
+    -> re-raise deadline after the 1.0 ms detect tick: 3.53 ms
+  T-D-12, VINDPM 18.4 V, start 19.102 V, acc 0.83 + 1 ms lag 21.588 V: 3.57 ms (lo, CP 18.9 W)   [20 s]
+    -> re-raise deadline after the 1.0 ms detect tick: 2.57 ms
+
+=== IINDPM at the edge, comparison (VINDPM 18.4 V) ===
+  0.30 A, nominal                                            20.500 V: 3.64 ms (lo, CP 18.9 W) | 21.588 V: 5.40 ms (lo, CP 18.9 W) margin +1.90   [30 s]
+  0.50 A, nominal                                            20.500 V: 4.73 ms (lo, CP 18.9 W) | 21.588 V: 7.17 ms (lo, CP 18.9 W) margin +3.67   [51 s]
+  0.50 A, eff 1.0 + 1 ms lag + acc 0.83 + TCR, d310          20.500 V: 2.47 ms (d310, ML0157 47.30) | 21.588 V: 4.23 ms (d310, ML0157 47.30) margin +0.73   [23 s]
+
+=== H.20 I_floor design form ===
+  I_floor at 18.9 W, 21.588 V, 1.0 mF, 3.5 ms: (18.9/18.05 - 3.538 x 1.0e-03 / 3.5e-03) / 0.88 = 0.0412 A
+  I_floor at 23.0 W, 21.588 V, 1.0 mF, 3.5 ms: (23.0/18.05 - 3.538 x 1.0e-03 / 3.5e-03) / 0.88 = 0.2993 A
+
+Total 777 s

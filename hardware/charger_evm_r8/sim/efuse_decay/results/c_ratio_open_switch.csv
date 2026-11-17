@@ -1,0 +1,897 @@
+scenario,V_bus_P0gate_V,V_bus_P2end_V,switch,node_set,dV_bus_V,dV_rgn_V,ratio,ratio_noise_bound
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,0.0000,0.0000,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,0.0000,0.0000,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,0.0000,0.0000,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,0.0000,0.0000,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,0.0000,0.0000,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,0.0000,0.0000,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,0.0000,0.0000,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 0.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,0.0000,0.0000,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,0.0000,0.0000,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,0.0000,0.0000,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,0.0000,0.0000,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,0.0000,0.0000,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,0.0000,0.0000,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,0.0000,0.0000,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,0.0000,0.0000,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,0.0000,0.0000,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,0.0000,0.0000,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,0.0000,0.0000,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,0.0000,0.0000,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 5.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.1501,-0.0150,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.1501,-0.0150,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.1501,-0.0150,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.9991,-0.1287,-0.0129,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.9991,-0.1001,-0.0100,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.1501,-0.0150,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.1501,-0.0150,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.1501,-0.0171,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.1501,-0.0171,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.1501,-0.0171,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.7992,-0.1287,-0.0146,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.7992,-0.1001,-0.0114,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.1501,-0.0171,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.1501,-0.0171,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.1501,-0.0158,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.1501,-0.0158,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.1501,-0.0158,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.4992,-0.1287,-0.0135,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.4992,-0.1001,-0.0105,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.1501,-0.0158,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.1501,-0.0158,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.1501,-0.0181,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.1501,-0.0181,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.1501,-0.0181,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.2993,-0.1287,-0.0155,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.2993,-0.1001,-0.0121,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.1501,-0.0181,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.1501,-0.0181,0.0035
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.1501,-0.0167,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.1501,-0.0167,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.1501,-0.0167,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.9992,-0.1287,-0.0143,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.9992,-0.1001,-0.0111,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.1501,-0.0167,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.1501,-0.0167,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.1501,-0.0192,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.1501,-0.0192,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.1501,-0.0192,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",7.7993,-0.1287,-0.0165,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",7.7993,-0.1001,-0.0128,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.1501,-0.0192,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.1501,-0.0192,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.1501,-0.0297,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.1501,-0.0297,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.1501,-0.0297,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",5.0586,-0.1287,-0.0254,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",5.0586,-0.1001,-0.0198,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.1501,-0.0297,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.1501,-0.0297,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.1501,-0.0469,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.1501,-0.0469,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.1501,-0.0469,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",3.1997,-0.1287,-0.0402,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",3.1997,-0.1001,-0.0313,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.1501,-0.0469,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.1501,-0.0469,0.0092
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.1287,-0.0129,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.1287,-0.0129,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.1287,-0.0129,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.9991,-0.1072,-0.0107,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.9991,-0.0858,-0.0086,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.1287,-0.0129,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.1287,-0.0129,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.1287,-0.0146,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.1287,-0.0146,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.1287,-0.0146,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.7992,-0.1072,-0.0122,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.7992,-0.0858,-0.0097,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.1287,-0.0146,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.1287,-0.0146,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.1287,-0.0135,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.1287,-0.0135,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.1287,-0.0135,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.4992,-0.1072,-0.0113,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.4992,-0.0858,-0.0090,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.1287,-0.0135,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.1287,-0.0135,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.1287,-0.0155,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.1287,-0.0155,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.1287,-0.0155,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.2993,-0.1072,-0.0129,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.2993,-0.0858,-0.0103,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.1287,-0.0155,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.1287,-0.0155,0.0035
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.1287,-0.0143,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.1287,-0.0143,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.1287,-0.0143,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.9992,-0.1072,-0.0119,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.9992,-0.0858,-0.0095,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.1287,-0.0143,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.1287,-0.0143,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.1287,-0.0165,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.1287,-0.0165,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.1287,-0.0165,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",7.7993,-0.1072,-0.0137,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",7.7993,-0.0858,-0.0110,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.1287,-0.0165,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.1287,-0.0165,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.1287,-0.0254,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.1287,-0.0254,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.1287,-0.0254,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",5.0586,-0.1072,-0.0212,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",5.0586,-0.0858,-0.0170,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.1287,-0.0254,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.1287,-0.0254,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.1287,-0.0402,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.1287,-0.0402,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.1287,-0.0402,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",3.1997,-0.1072,-0.0335,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",3.1997,-0.0858,-0.0268,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.1287,-0.0402,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 10.0 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.1287,-0.0402,0.0092
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.0143,-0.0014,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.0143,-0.0016,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.0143,-0.0015,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.0143,-0.0017,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.0143,-0.0016,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.0143,-0.0018,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.0143,-0.0028,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 13k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, gain fit R 17k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.0143,-0.0045,0.0090
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.1144,-0.0114,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.1215,-0.0122,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.1215,-0.0122,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.9991,-0.1430,-0.0143,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.9991,-0.1573,-0.0157,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0715,-0.0071,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.2359,-0.0236,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.1144,-0.0130,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.1215,-0.0138,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.1215,-0.0138,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.7992,-0.1430,-0.0162,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.7992,-0.1573,-0.0179,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0715,-0.0081,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.2359,-0.0268,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.1144,-0.0120,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.1215,-0.0128,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.1215,-0.0128,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",9.4992,-0.1430,-0.0150,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",9.4992,-0.1573,-0.0166,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0715,-0.0075,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.2359,-0.0248,0.0031
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.1144,-0.0138,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.1215,-0.0146,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.1215,-0.0146,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.2993,-0.1430,-0.0172,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.2993,-0.1573,-0.0189,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0715,-0.0086,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.2359,-0.0284,0.0035
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.1144,-0.0127,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.1215,-0.0135,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.1215,-0.0135,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",8.9992,-0.1430,-0.0159,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",8.9992,-0.1573,-0.0175,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0715,-0.0079,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.2359,-0.0262,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.1144,-0.0147,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.1215,-0.0156,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.1215,-0.0156,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",7.7993,-0.1430,-0.0183,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",7.7993,-0.1573,-0.0202,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0715,-0.0092,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.2359,-0.0302,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.1144,-0.0226,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.1215,-0.0240,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.1215,-0.0240,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",5.0586,-0.1430,-0.0283,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",5.0586,-0.1573,-0.0311,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0715,-0.0141,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.2359,-0.0466,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.1144,-0.0357,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.1215,-0.0380,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.1215,-0.0380,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 13k",3.1997,-0.1430,-0.0447,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, gain fit R 17k",3.1997,-0.1573,-0.0491,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0715,-0.0223,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 105 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.2359,-0.0737,0.0094
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.0071,-0.0007,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.0071,-0.0008,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.0071,-0.0008,0.0030
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.0071,-0.0009,0.0034
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.0071,-0.0008,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.0071,-0.0009,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.0071,-0.0014,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 13k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, gain fit R 17k",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 0.09 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.0071,-0.0022,0.0089
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.9991,-0.1001,-0.0100,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.9991,-0.1001,-0.0100,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.9991,-0.1072,-0.0107,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.9991,-0.1215,-0.0122,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.9991,-0.1358,-0.0136,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.9991,-0.0643,-0.0064,0.0029
+"V_fc 0, V_batt 7.4",5.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.9991,-0.2073,-0.0207,0.0029
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.7992,-0.1001,-0.0114,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.7992,-0.1001,-0.0114,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.7992,-0.1072,-0.0122,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.7992,-0.1215,-0.0138,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.7992,-0.1358,-0.0154,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.7992,-0.0643,-0.0073,0.0033
+"V_fc 0, V_batt 7.4",7.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.7992,-0.2073,-0.0236,0.0033
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",9.4992,-0.1001,-0.0105,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",9.4992,-0.1001,-0.0105,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",9.4992,-0.1072,-0.0113,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",9.4992,-0.1215,-0.0128,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",9.4992,-0.1358,-0.0143,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",9.4992,-0.0643,-0.0068,0.0030
+"V_fc 0, V_batt 7.9",6.400,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",9.4992,-0.2073,-0.0218,0.0031
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.2993,-0.1001,-0.0121,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.2993,-0.1001,-0.0121,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.2993,-0.1072,-0.0129,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.2993,-0.1215,-0.0146,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.2993,-0.1358,-0.0164,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.2993,-0.0643,-0.0078,0.0035
+"V_fc 0, V_batt 7.9",7.600,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.2993,-0.2073,-0.0250,0.0035
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",8.9992,-0.1001,-0.0111,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",8.9992,-0.1001,-0.0111,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",8.9992,-0.1072,-0.0119,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",8.9992,-0.1215,-0.0135,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",8.9992,-0.1358,-0.0151,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",8.9992,-0.0643,-0.0071,0.0032
+"V_fc 0, V_batt 8.4",6.900,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",8.9992,-0.2073,-0.0230,0.0032
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",7.7993,-0.1001,-0.0128,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",7.7993,-0.1001,-0.0128,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",7.7993,-0.1072,-0.0137,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",7.7993,-0.1215,-0.0156,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",7.7993,-0.1358,-0.0174,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",7.7993,-0.0643,-0.0082,0.0037
+"V_fc 0, V_batt 8.4",8.100,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",7.7993,-0.2073,-0.0266,0.0037
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",5.0586,-0.1001,-0.0198,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",5.0586,-0.1001,-0.0198,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",5.0586,-0.1072,-0.0212,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",5.0586,-0.1215,-0.0240,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",5.0586,-0.1358,-0.0268,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",5.0586,-0.0643,-0.0127,0.0057
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",10.842,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",5.0586,-0.2073,-0.0410,0.0058
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit 0.48 R 8.19k",3.1997,-0.1001,-0.0313,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.19 V R 9.2k",3.1997,-0.1001,-0.0313,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, dip fit V_on 1.25 V R 9.5k",3.1997,-0.1072,-0.0335,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 13k",3.1997,-0.1215,-0.0380,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, gain fit R 17k",3.1997,-0.1358,-0.0424,0.0092
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","as-built, open-cathode est. R 3.5k (ASSUMPTION)",3.1997,-0.0643,-0.0201,0.0091
+"V_fc 13.0 (reads 12.34), V_batt 7.4-8.4",12.700,15.90,"open, V-MOT0 15.9 V tau 122 s tw 1.60 s","repaired, healthy TL431 REF 4 uA",3.1997,-0.2073,-0.0648,0.0093

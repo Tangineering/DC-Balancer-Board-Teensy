@@ -1,0 +1,6 @@
+subset,n_cases_above_12V_at_0p4s,slowest_slope_Vps,case
+all I_evm,1230,-2.294,LATCHED_BD V0 16.00 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.70
+I_evm >= floor,433,-6.094,LATCHED_BD V0 16.00 Cin 28.4u Cevm 20.6u Ievm 0.391m IQ 0.000m Vf 0.40
+I_evm = 0,291,-2.294,LATCHED_BD V0 16.00 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.70
+"closed-form bound at 12 V, no current sinks, 79.8 uF",-,-1.852,-
+stuck path (held at V_bus) +-2 counts each end over 0.2 s,-,+-0.143,-

@@ -1,0 +1,4 @@
+quantity,r7_calc_in_spike_python,ngspice_deck,rel_diff
+IN peak after turn-off (V),33.7869,33.7640,-0.0007
+input current at turn-off (A),68.0768,67.9015,-0.0026
+W1/W2 lead peak current (A),130.0396,130.0453,0.0000

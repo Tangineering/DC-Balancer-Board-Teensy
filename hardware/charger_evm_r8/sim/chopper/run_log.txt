@@ -1,0 +1,202 @@
+Sim 2 chopper: ** ngspice-46
+U101 OVP: gain 18.8063, leakage shift 0.291 V, t_on 509 us, SR 2185 V/s
+  OVP lo: rise 22.19 V, fall 20.50 V
+  OVP typ: rise 23.19 V, fall 21.63 V
+  OVP hi: rise 24.41 V, fall 22.32 V
+  OVP lo-leak: rise 21.90 V, fall 20.21 V
+  OVP r24-lo: rise 22.97 V, fall 21.22 V
+  OVP r24-typ: rise 24.00 V, fall 22.38 V
+  OVP r24-hi: rise 25.27 V, fall 23.10 V
+  OVP r24-lo-leak: rise 22.67 V, fall 20.92 V
+  OVP r244-lo: rise 23.40 V, fall 21.62 V
+  OVP r244-typ: rise 24.45 V, fall 22.81 V
+  OVP r244-hi: rise 25.74 V, fall 23.54 V
+  OVP r244-lo-leak: rise 23.09 V, fall 21.31 V
+Part A: static I-V
+  H-lo    onset 21.350 V, clamp(10 mA) 21.350 V, 0.47 A at 21.39 V, read@15.93 15.961, V-MOT for 18.2 V reading 18.18
+  H-typ   onset 22.120 V, clamp(10 mA) 22.120 V, 0.47 A at 22.21 V, read@15.93 15.776, V-MOT for 18.2 V reading 18.36
+  H-hi    onset 23.095 V, clamp(10 mA) 23.095 V, 0.47 A at 23.32 V, read@15.93 15.390, V-MOT for 18.2 V reading 18.75
+  F-k9    onset 32.360 V, clamp(10 mA) 32.360 V, 0.47 A at 32.38 V, read@15.93 13.445, V-MOT for 18.2 V reading 25.21
+  F-k15   onset 29.300 V, clamp(10 mA) 29.300 V, 0.47 A at 29.32 V, read@15.93 13.495, V-MOT for 18.2 V reading 23.42
+  F-soft  onset nan V, clamp(10 mA) nan V, 0.47 A at nan V, read@15.93 13.445, V-MOT for 18.2 V reading 28.16
+  F-open  onset nan V, clamp(10 mA) nan V, 0.47 A at nan V, read@15.93 13.445, V-MOT for 18.2 V reading 25.21
+Part B: 1026 transient runs
+  [B] 25/1026 done, 13 s
+  [B] 50/1026 done, 23 s
+  [B] 75/1026 done, 31 s
+  [B] 100/1026 done, 39 s
+  [B] 125/1026 done, 48 s
+  [B] 150/1026 done, 56 s
+  [B] 175/1026 done, 64 s
+  [B] 200/1026 done, 73 s
+  [B] 225/1026 done, 82 s
+  [B] 250/1026 done, 130 s
+  [B] 275/1026 done, 153 s
+  [B] 300/1026 done, 153 s
+  [B] 325/1026 done, 170 s
+  [B] 350/1026 done, 170 s
+  [B] 375/1026 done, 170 s
+  [B] 400/1026 done, 170 s
+  [B] 425/1026 done, 175 s
+  [B] 450/1026 done, 185 s
+  [B] 475/1026 done, 194 s
+  [B] 500/1026 done, 203 s
+  [B] 525/1026 done, 213 s
+  [B] 550/1026 done, 223 s
+  [B] 575/1026 done, 232 s
+  [B] 600/1026 done, 241 s
+  [B] 625/1026 done, 252 s
+  [B] 650/1026 done, 261 s
+  [B] 675/1026 done, 269 s
+  [B] 700/1026 done, 277 s
+  [B] 725/1026 done, 284 s
+  [B] 750/1026 done, 292 s
+  [B] 775/1026 done, 301 s
+  [B] 800/1026 done, 310 s
+  [B] 825/1026 done, 320 s
+  [B] 850/1026 done, 329 s
+  [B] 875/1026 done, 338 s
+  [B] 900/1026 done, 347 s
+  [B] 925/1026 done, 356 s
+  [B] 950/1026 done, 365 s
+  [B] 975/1026 done, 373 s
+  [B] 1000/1026 done, 382 s
+  [B] 1025/1026 done, 390 s
+  [B] 1026/1026 done, 390 s
+Part C: 168 transient runs
+  [C] 25/168 done, 10 s
+  [C] 50/168 done, 17 s
+  [C] 75/168 done, 26 s
+  [C] 100/168 done, 34 s
+  [C] 125/168 done, 42 s
+  [C] 150/168 done, 49 s
+  [C] 168/168 done, 55 s
+Part D: 262 transient runs
+  [D] 25/262 done, 9 s
+  [D] 50/262 done, 17 s
+  [D] 75/262 done, 25 s
+  [D] 100/262 done, 34 s
+  [D] 125/262 done, 43 s
+  [D] 150/262 done, 52 s
+  [D] 175/262 done, 61 s
+  [D] 200/262 done, 70 s
+  [D] 225/262 done, 79 s
+  [D] 250/262 done, 86 s
+  [D] 262/262 done, 90 s
+Part E: 2636 transient runs (VESC cut)
+  [E] 25/2636 done, 19 s
+  [E] 50/2636 done, 33 s
+  [E] 75/2636 done, 46 s
+  [E] 100/2636 done, 59 s
+  [E] 125/2636 done, 72 s
+  [E] 150/2636 done, 86 s
+  [E] 175/2636 done, 100 s
+  [E] 200/2636 done, 115 s
+  [E] 225/2636 done, 130 s
+  [E] 250/2636 done, 143 s
+  [E] 275/2636 done, 156 s
+  [E] 300/2636 done, 171 s
+  [E] 325/2636 done, 185 s
+  [E] 350/2636 done, 200 s
+  [E] 375/2636 done, 213 s
+  [E] 400/2636 done, 226 s
+  [E] 425/2636 done, 240 s
+  [E] 450/2636 done, 253 s
+  [E] 475/2636 done, 266 s
+  [E] 500/2636 done, 278 s
+  [E] 525/2636 done, 289 s
+  [E] 550/2636 done, 300 s
+  [E] 575/2636 done, 311 s
+  [E] 600/2636 done, 322 s
+  [E] 625/2636 done, 332 s
+  [E] 650/2636 done, 451 s
+  [E] 675/2636 done, 462 s
+  [E] 700/2636 done, 475 s
+  [E] 725/2636 done, 490 s
+  [E] 750/2636 done, 504 s
+  [E] 775/2636 done, 668 s
+  [E] 800/2636 done, 696 s
+  [E] 825/2636 done, 707 s
+  [E] 850/2636 done, 726 s
+  [E] 875/2636 done, 745 s
+  [E] 900/2636 done, 765 s
+  [E] 925/2636 done, 783 s
+  [E] 950/2636 done, 801 s
+  [E] 975/2636 done, 817 s
+  [E] 1000/2636 done, 836 s
+  [E] 1025/2636 done, 857 s
+  [E] 1050/2636 done, 877 s
+  [E] 1075/2636 done, 894 s
+  [E] 1100/2636 done, 911 s
+  [E] 1125/2636 done, 929 s
+  [E] 1150/2636 done, 949 s
+  [E] 1175/2636 done, 969 s
+  [E] 1200/2636 done, 987 s
+  [E] 1225/2636 done, 1004 s
+  [E] 1250/2636 done, 1022 s
+  [E] 1275/2636 done, 1041 s
+  [E] 1300/2636 done, 1059 s
+  [E] 1325/2636 done, 1077 s
+  [E] 1350/2636 done, 1092 s
+  [E] 1375/2636 done, 1108 s
+  [E] 1400/2636 done, 1123 s
+  [E] 1425/2636 done, 1139 s
+  [E] 1450/2636 done, 1153 s
+  [E] 1475/2636 done, 1168 s
+  [E] 1500/2636 done, 1182 s
+  [E] 1525/2636 done, 1195 s
+  [E] 1550/2636 done, 1210 s
+  [E] 1575/2636 done, 1228 s
+  [E] 1600/2636 done, 1248 s
+  [E] 1625/2636 done, 1267 s
+  [E] 1650/2636 done, 1285 s
+  [E] 1675/2636 done, 1302 s
+  [E] 1700/2636 done, 1318 s
+  [E] 1725/2636 done, 1335 s
+  [E] 1750/2636 done, 1351 s
+  [E] 1775/2636 done, 1365 s
+  [E] 1800/2636 done, 1378 s
+  [E] 1825/2636 done, 1394 s
+  [E] 1850/2636 done, 1410 s
+  [E] 1875/2636 done, 1427 s
+  [E] 1900/2636 done, 1443 s
+  [E] 1925/2636 done, 1457 s
+  [E] 1950/2636 done, 1471 s
+  [E] 1975/2636 done, 1488 s
+  [E] 2000/2636 done, 1506 s
+  [E] 2025/2636 done, 1526 s
+  [E] 2050/2636 done, 1544 s
+  [E] 2075/2636 done, 1561 s
+  [E] 2100/2636 done, 1579 s
+  [E] 2125/2636 done, 1600 s
+  [E] 2150/2636 done, 1620 s
+  [E] 2175/2636 done, 1637 s
+  [E] 2200/2636 done, 1653 s
+  [E] 2225/2636 done, 1671 s
+  [E] 2250/2636 done, 1688 s
+  [E] 2275/2636 done, 1707 s
+  [E] 2300/2636 done, 1724 s
+  [E] 2325/2636 done, 1742 s
+  [E] 2350/2636 done, 1760 s
+  [E] 2375/2636 done, 1778 s
+  [E] 2400/2636 done, 1796 s
+  [E] 2425/2636 done, 1816 s
+  [E] 2450/2636 done, 1836 s
+  [E] 2475/2636 done, 1858 s
+  [E] 2500/2636 done, 1877 s
+  [E] 2525/2636 done, 1897 s
+  [E] 2550/2636 done, 1912 s
+  [E] 2575/2636 done, 1929 s
+  [E] 2600/2636 done, 1941 s
+  [E] 2625/2636 done, 1953 s
+  [E] 2636/2636 done, 1959 s
+Part F: 192 transient runs (retuned OVP)
+  [F] 25/192 done, 10 s
+  [F] 50/192 done, 17 s
+  [F] 75/192 done, 24 s
+  [F] 100/192 done, 31 s
+  [F] 125/192 done, 37 s
+  [F] 150/192 done, 47 s
+  [F] 175/192 done, 54 s
+  [F] 192/192 done, 58 s
+Done: {'ngspice': '** ngspice-46', 'runs': 4284, 'failed': 0, 'runs_by_part': {'B': 1026, 'C': 144, 'C-noreq': 24, 'D': 252, 'D-noRTovp': 10, 'E': 1960, 'E-latch': 128, 'E-noreq': 128, 'EP': 420, 'F': 192}, 'wall_s': 2558}

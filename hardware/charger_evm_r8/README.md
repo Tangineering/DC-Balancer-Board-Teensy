@@ -12,6 +12,38 @@ The full record is the design document `docs/charger_bq25798_wiring_design_2026-
 each topic to its authoritative file and section. Neither text that the design document marks "superseded", "withdrawn"
 or "history" nor the r7-outline work in `archive_r7_outline/` is the current design.
 
+**State after phases A and B (2026-11-14; the 2026-11-15 paragraph below adds phase C).** (**Superseded 2026-11-15:** "Current state (2026-11-14).") The read-only review `REVIEW_2026-11-14.md` and the five simulations of `sim/`
+(overview in `sim/README.md`) were answered in the 2026-11-14 round. `LAYOUT_DECISIONS.md` section 1 gives the board
+status, and D-70 to D-84 record the changes. Copper is unchanged on both boards. The silkscreen carries pin-1 marks,
+wire-pad maps, lead labels and board markings; the EIB stencil has no apertures on DNP pads; the netlist carries the
+ordered parts. The ordering set is `bom_2026-11-14/`. The fab packages `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`
+were written on 2026-11-15 by `gen/export.sh cr 2026-11-14` and `gen/export.sh eib 2026-11-14`. (**Superseded
+2026-11-14, packages exported:** "are to be written by `gen/export.sh cr 2026-11-14` and `gen/export.sh eib
+2026-11-14`; the last exported packages are `fab/cr_2026-11-13f/` and `fab/eib_2026-11-13c/`.") Section 11 lists the operator questions of the round. Where this
+README and section E of the design document disagree with `bom_2026-11-14/` on a part, quantity or MPN, the BOM
+governs (REVIEW DOC-1). Design revision r9-25 reconciled section E with `bom_2026-11-14/`, and r9-26 corrected its
+residual rows (**Superseded 2026-11-15, REVIEW R2-DOC-1:** "section E has not been revised for the 2026-11-13 order
+rulings"). Those rulings set one
+BQ25798EVM, no spare U101, 6 CR and 3 EIB boards, and a J-TAP mate from workshop stock (design-document change rows
+r9-21 and r9-22; `LAYOUT_DECISIONS.md` section 1). D-66 replaced the W5 ribbon and the J101/J201 headers by nine
+soldered wires between two 3 x 3 wire-pad grids, so the CR no longer lifts off without desoldering (section 8.5).
+
+**Current state (2026-11-15, phase C).** A second review of the r9-25 records (findings R2-*) was answered in phase C
+of the same round. `update_2026-11-14/notes_phaseC_*.md` hold the per-finding status and the evidence, and
+`LAYOUT_DECISIONS.md` D-85 to D-92 record the changes. The board edits are silkscreen texts only: "VIN1" and "GND"
+labels at the CR input pair W1/W2 (D-85) and an F.Silkscreen number beside every EIB E pad (D-86). The netlist
+carries corrected or new Note fields (D-88), and the BOM set holds five opt-in SPARE lines (D-89). Both packages were
+written again in place on 2026-11-15 (D-90). Copper is unchanged on both boards. The design document is at revision
+r9-30 (2026-11-16) (**Superseded 2026-11-16, r9-30:** "r9-29"; **superseded 2026-11-16, r9-29:** "r9-28"; **superseded 2026-11-16, r9-28:** "r9-27"), and the companion document is at revision r5 (**Superseded 2026-11-16, r9-30:** "r4"). Design r9-30 records the operator rulings of 2026-11-16 on the charger I2C and the FC window: 100 kHz with the existing 10 kOhm MB pull-ups (PM9 withdrawn), an FR-07 budget of 3.5 ms from the pin-34 rising edge to REG03-05 write complete (was 1.5 ms), FC-window close at G < 0.40 A and admission at G >= 0.50 A (was 0.30 A); D-96 records them. A regen-image VINDPM of 18.4 V was evaluated the same day and deferred by the operator ("Let's keep at 19V for now then, with a note to revisit later if necessary."), so the regen image stays at VINDPM 19.0 V (design J.2 item 91). Table 11.4
+lists the operator questions; the J.2 item 84
+spare-U101 question affects the Mouser order, and the SPARE lines affect the Digi-Key order. The J.2 item 74 ruling
+(2026-11-15, D-93) accepts the charger dropout on hard brakes and leaves the Mouser order unchanged. The rulings of
+2026-11-16 close J.2 item 83 by a D-36 exemption for /CHG_ARM with a build check (D-94). They keep the EIB reference
+rule set and the CR W6 "GND" label as they are (D-95). Neither ruling changes copper or a package. A third ruling of
+2026-11-16 keeps the W5 grid copper and adopts the staged T-A-06 metering as the single-bridge mitigation (D-80
+ruling; design r9-29). (**Superseded 2026-11-16, D-80 ruling:** "The W5 grid question stays open; D-80 carries a
+2026-11-16 addendum with new findings.")
+
 ## 2. Architecture
 
 ### 2.1 Block diagram
@@ -27,7 +59,9 @@ returns to the pack through CR J1 pads 18/19.
 Figure 2.1. Charger path, block diagram (r9).
 
 The diagram is schematic and not to scale. Thick red conductors carry power and thin blue lines carry logic or analog
-signals; a bridge marks a crossing with no connection. The source is `gen/readme_figures.py`. Only CR J1 pad 11 and the J-TAP conductors enter the permit gate. Table 2.2, section 8.6 and
+signals; a bridge marks a crossing with no connection. The source is `gen/readme_figures.py`. Figures 2.1 and 5.1 were regenerated on 2026-11-15 for the fitted
+hardware: U101 TCKE1401NM, nine W5 wires, the J-TAP mate from workshop stock and R131B/R132 at 4.99 kOhm (REVIEW
+R2-DOC-6; `LAYOUT_DECISIONS.md` D-92). Only CR J1 pad 11 and the J-TAP conductors enter the permit gate. Table 2.2, section 8.6 and
 design-document sections A.5 and C give the EIB-to-EVM leads and the EVM modifications.
 
 ### 2.2 Blocks
@@ -41,7 +75,7 @@ Table 2.1. Blocks of the charger path.
 | MB RT1987 switches D-BC-FC, D-BC-RG | Route VBUS (FC charging) or V-MOT (regen) into VCHG-IN | MB, existing parts |
 | MB D-BT-SQ (RT1987) | Connects the charger output net VCHG to the pack VBT | MB, existing part |
 | CR J1 (22-pin CHG header) | Mates the CR to the 22 former Ag105 holes | CR underside, TSW strips in MB SSQ sockets |
-| eFuse U101 TCKE1401NM (D-67; superseded: TPS26630RGER) | Input current limit 2.37 A typical, UVLO 9.86 V, OVP 23.19 V; fault output (FLAG) and IMON | CR top |
+| eFuse U101 TCKE1401NM (D-67; superseded: TPS26630RGER) | Input current limit 2.37 A typical (about 1.97-2.77 A, D-67); UVLO rising 9.86 V and OVP rising 23.19 V typical; with pin leakage UVLO rising 9.055-10.548 V and OVP rising 21.588-25.019 V (`sim/efuse_decay/RESULTS.md` Table 1); fault output (FLAG) and IMON | CR top |
 | Permit gate | Four comparators and five LVC packages; holds the converter off unless a release term is true | CR top |
 | J-TAP (J102) | Brings the ten tap conductors onto the CR | CR, THT header, +x side |
 | EVM (BQ25798) | Buck-boost charger, I2C address 0x6B | Off-board, on an insulating plate fixed to the chassis |
@@ -59,13 +93,13 @@ Table 2.2. Interfaces of the charger path.
 
 | Interface | Connector | What crosses it |
 |---|---|---|
-| MB to CR power and signals | MB SSQ-110/112-01-L-S sockets, CR TSW-110/112-07-L-S strips (CR J1) | Pad 10 VCHGIN; pads 18/19 VCHG; pads 4, 14, 15 GND; pad 11 CHG_ARM; pad 3 STAT; pads 8/7 SDA/SCL; pad 13 TS_EXT; 11 pads without a net |
-| MB to CR taps | J-TAP (J102) Micro-Fit 3.0 2 x 5 (Molex 43045-1012), cable Molex 2147561101 | T1, T7b, T2, T5, T6, T10, T13, T16, T17, T17r |
-| CR to EVM input | W1 (VCHGOUT), W2 (GND); CR plated holes to EVM J1 screw terminal | Charger input, <= 2.41 A for <= 202 ms (eFuse limit), normally <= 1.76 A |
+| MB to CR power and signals | MB SSQ-110/112-01-G-S sockets (**superseded 2026-11-15, REVIEW R2-INT-4:** "SSQ-110/112-01-L-S"), CR TSW-110/112-07-L-S strips (CR J1) | Pad 10 VCHGIN; pads 18/19 VCHG; pads 4, 14, 15 GND; pad 11 CHG_ARM; pad 3 STAT; pads 8/7 SDA/SCL; pad 13 TS_EXT; 11 pads without a net |
+| MB to CR taps | J-TAP (J102) Micro-Fit 3.0 2 x 5 (Molex 43045-1012), mate built from workshop stock (r9-22; **superseded 2026-11-14:** "cable Molex 2147561101") | T1, T7b, T2, T5, T6, T10, T13, T16, T17, T17r |
+| CR to EVM input | W1 (VCHGOUT, silkscreen "VIN1"), W2 (GND, silkscreen "GND"; D-85); CR plated holes to EVM J1 screw terminal | Charger input, at most about 2.77 A for at most 190 ms (TCKE1401NM I_LIM dwell, D-67), normally <= 1.76 A (**superseded 2026-11-15:** "<= 2.41 A for <= 202 ms (eFuse limit)", the TPS26630 figures) |
 | EVM to CR output | W3 (VCHG), W4 (GND); EVM J5 screw terminal to CR plated holes | Charger output, <= 3.21 A |
-| CR to EVM I2C | W7 twisted triple; CR plated holes to EVM J8 (Molex KK 254 housing) | SCL, SDA; GND bonded at the CR end only |
+| CR to EVM I2C | W7 twisted triple; CR plated holes, soldered to the EVM J8 pins (D-66; **superseded 2026-11-14:** "to EVM J8 (Molex KK 254 housing)") | SCL, SDA; GND bonded at the CR end only |
 | CR to EVM thermistor | W6 twisted pair to EVM J7 pin 1 | TS_EXT; fitted only if a pack NTC is fitted at J-NTC |
-| CR to EIB | W5 14-way 0.635 mm flat cable, CR J101 to EIB J201 | 3V3 (two conductors), CE_DRV, ILIM_REL_A, ILIM_REL_B, RFC_OFF to the EIB; STAT to the CR; four GND |
+| CR to EIB | W5: nine soldered wires between the 3 x 3 wire-pad grids CR J101 and EIB J201 (D-66, Table D-66; **superseded 2026-11-14:** "W5 14-way 0.635 mm flat cable") | 3V3 (two wires), CE_DRV, ILIM_REL_A, ILIM_REL_B, RFC_OFF to the EIB; STAT to the CR; two GND (**superseded 2026-11-14:** "four GND") |
 | EIB to EVM | E leads, 28 AWG Kynar | E8 AGND to TP49, E3 to TP33, E2 to JP14 pin 2, E7 STAT to TP38, E1 REGN to JP12, E5 /CE to TP36 |
 
 Every interface in Table 2.2 appears in Figure 2.1. The power interfaces are CR J1 pads 4, 10, 14, 15, 18 and 19 and the
@@ -107,7 +141,7 @@ Table 3.1. Changes of 2026-11-12.
 | Balance lead J-BL | Required to charge | Not required to charge | D-38 |
 | CHG_QUAL | Teensy pin 10 (SPI CS0 default) | **Teensy pin 33**; pin 10 freed | D-48 |
 | EIB far-end senses | U203 (ILIM_HIZ) and U204 (/CE) fitted | **DNP** with C203, C204, R258-R265; leads E4, E6 not built | D-49 |
-| W5 ribbon conductors 11, 13 | ILIM_SENSE, CE_SENSE | **Not connected**; J101 stays 2 x 7; 9-10 and 8-9 shorts reach 33 mA (section 8.6) | D-49 |
+| W5 ribbon conductors 11, 13 | ILIM_SENSE, CE_SENSE | **Not connected**; since D-66 no ribbon exists, J101 and J201 are 3 x 3 wire-pad grids and pins 11-14 are gone (**superseded 2026-11-14:** "J101 stays 2 x 7; 9-10 and 8-9 shorts reach 33 mA (section 8.6)") | D-49, D-66 |
 | W6/W7 at the CR | SMT pads | Plated through-holes, soldered | D-45 |
 | Chip sizes | Six 0402 parts | All chip passives 0603 or larger | D-44 |
 | Teensy pin 7 readback (step PM10) | Planned (ROS removal) | Withdrawn; ROS stays fitted, pin 7 undriven | r9-4 |
@@ -191,7 +225,7 @@ Table 4.2. Defence layers per hazard.
 
 | Hazard | Register layer | Firmware layer | Hardware permit gate | Watchdog |
 |---|---|---|---|---|
-| Bus feeds the charger (regen-armed cruise) | VINDPM 18.62-19.38 V above the 16.39 V bus maximum | I2C latch trip (FR-08(b)); H1 plausibility check (FR-08(d)) | The regen comparator pair (H1 AND UVB) holds ILIM_HIZ until V-MOT exceeds 1.089 x VBUS | R5 resets within t_WDT |
+| Bus feeds the charger (regen-armed cruise) | VINDPM 18.62-19.38 V above the 16.39 V bus maximum; 1.12 V above the 17.5 V OV_BUS limit | I2C latch trip (FR-08(b)); H1 plausibility check (FR-08(d)) | The regen comparator pair (H1 AND UVB) holds ILIM_HIZ until V-MOT exceeds 1.089 x VBUS | R5 resets within t_WDT |
 | Loop in an FC window | VINDPM 14.5 V, IINDPM <= 0.90 A | FC_CHARGE and BT_BUS never HIGH together (invariant I-9), FAULT_SWITCH_CONFLICT, BT-current trip (FR-10) | None in r9; the FC-window release term (FCCP) only releases the converter | R5 |
 | Back-feed into a disabled boost | None | Switch ordering rules; reset release order checked in T-W-01 | None | Reset drops every EN through 10 kOhm pull-downs |
 | Pack overvoltage | VREG 8.320 V interim; VBAT_OVP follows VREG (not independent) | Register read-back (FR-46), slot-5 verify, CHG_PACK_OV (FR-47(a)), OV_BATT at 8.5 V | None since D-38 | R5 bounds a hang to about 51 ms |
@@ -251,8 +285,12 @@ the pull-downs and the output resistors to J101.
 
 Figure 5.1. Permit gate, logic diagram (r9).
 
-In Figure 5.1, the small grey numbers are package pin numbers from design-document B.8. The U107 DBV pin numbers are
-still TODO(verify: SCES487I).
+In Figure 5.1, the small grey numbers are package pin numbers from design-document B.8. The U107 DBV pin numbers
+follow SCES487I Table 4-1, closed (`LAYOUT_DECISIONS.md` section 11 item 18). (**Superseded 2026-11-14, REVIEW
+LOG-4:** "The U107 DBV pin numbers are still TODO(verify: SCES487I).") The note inside the figure image now cites
+SCES487I Table 4-1, and the figure gives R131B and R132 at the fitted 4.99 kOhm (regenerated 2026-11-15, D-92).
+(**Superseded 2026-11-15, REVIEW R2-DOC-6:** "The note inside the figure image still carries the TODO until
+`gen/readme_figures.py`, whose caption string is corrected, is run again.")
 
 The first release term (H1U) is the regen release. The second term (FCCP) is the FC-window release; it needs both
 comparators to agree, so a stuck-HIGH U120 alone does not release the converter. The third term (QF) releases the
@@ -302,7 +340,7 @@ Table 6.1. Modes, switch states and stop conditions.
 |---|---|---|---|
 | Init (State 0) | Staged bring-up through several vectors; REGEN 0, FC_CHARGE 0 | Nothing; the charger has no input power | Not applicable |
 | Idle (State 1) | 1 1 1 1 1 0 0 1; P5 0, QUAL 0 | Nothing; the charger has no input power | Not applicable |
-| Run entry qualification (F.5-T1) | 1 1 1 1 1 1 0 1; P5 0 | QF (QUAL HIGH, raised only on PG_STAT = 1) | Firmware drops QUAL; T_QUAL_MAX 0.46 s backstop latches CHG_QUAL_OVERRUN |
+| Run entry qualification (F.5-T1) | 1 1 1 1 1 1 0 1; P5 0 | QF (QUAL HIGH, raised at the first VBUS_PRESENT_STAT = 1 with P5 LOW, after EN_CHG = 0 and REG11 = 0 are read back; dropped at PG_STAT + 50 ms; FR-04) (**superseded 2026-11-15, REVIEW R2-FW-6:** "raised only on PG_STAT = 1") | Firmware drops QUAL; T_QUAL_MAX 0.46 s backstop latches CHG_QUAL_OVERRUN |
 | Regen-armed cruise | 1 1 1 1 1 1 0 1; P5 1 | Nothing; H1U = 0 holds ILIM_HIZ | Not applicable |
 | Regen burst | As regen-armed cruise | H1U = 1 while V-MOT > 1.089 x VBUS | H1 falls; VINDPM 19.0 V; IINDPM 1.70 A; clamp 1.33-1.76 A |
 | FC window (R6/R7) | 1 1 1 0 1 1 1 1; P5 1 | FCCP (FCC_ON agreeing with NOT FCC_OFF) | Closes at t_pred - T_LEAD before each purge; FR-42 backstop; IINDPM 0.90 A; raw I_fc > 1.20 A arm drop; OC_FC 1.4 A |
@@ -332,7 +370,10 @@ An FC window is admitted only with all of these conditions:
 - the R5 build flag and the full-T-W-01 build flag set (section 7.2).
 
 The FC image sets VINDPM 14.5 V, IINDPM = min(0.90 A, G) and ICHG 1.60 A. G is the traction-current governor limit of
-design-document section F.4; it subtracts a 2 s peak-hold of traction current. BT_BUS stays LOW for the whole window,
+design-document section F.4; it subtracts a 2 s peak-hold of traction current. Since design r9-30 (operator ruling
+2026-11-16) a window is admitted only at G >= 0.50 A and closes at G < 0.40 A, so IINDPM is at least 0.40 A while a
+window is open. The 0.40 A floor is a close threshold, not a clamp of the FC image above G; the brake write-back of
+FR-41(iii) is the one stated exception (design document FR-41). BT_BUS stays LOW for the whole window,
 which by itself removes the only pack-to-VBUS element. During a brake in a window, V-MOT > VBUS reverse-biases D-BC-FC,
 so the charger draws only from the motor.
 
@@ -341,7 +382,8 @@ so the charger draws only from the motor.
 Under a hang the gate follows the frozen P5, QUAL and FCC levels. Charging continues as last commanded for at most
 t_WDT + 1 ms, about 51 ms at the 50 ms target. The watchdog reset then drops P5, QUAL and every EN through the
 pull-downs. This bound assumes that the i.MX RT1062 pad keeper does not hold pins 5 and 33 HIGH against the 47 kOhm
-pull-downs. Keeper strength is TODO(verify: IMXRT1060RM). A hang inside an FC window can still meet one purge with a
+pull-downs. Keeper strength is TODO(verify: IMXRT1060RM); the bound holds for a keeper current below 17.0 uA (sim 4 section 5.3;
+design document F.4). A hang inside an FC window can still meet one purge with a
 frozen MCU, in about 1.5 % of window hangs. Only the bench characterises this case (T-D-14).
 
 ## 7. Firmware requirements this hardware creates
@@ -350,6 +392,10 @@ frozen MCU, in about 1.5 % of window hangs. Only the bench characterises this ca
 
 The firmware is not changed in this round. Every item below is a requirement for the future BQ25798 firmware round,
 which follows the PCB design. The R5 watchdog firmware is built in that same round.
+
+**Amended 2026-11-15 (REVIEW R2-DOC-13).** Table 7.2 summarizes the r9 safety rules up to revision r9-12. Table 7.3
+lists the firmware criteria that revisions r9-25 and r9-26 add or change. Design-document section G.2 governs on any
+difference.
 
 ### 7.2 Preconditions for charging
 
@@ -373,7 +419,7 @@ Table 7.1. Teensy pins of the charger path.
 |---|---|---|---|
 | 5 | CHG_ARM (was MPPT_DISABLE) | OUTPUT, LOW early in setup(); HIGH = charging allowed | CR J1 pad 11 |
 | 6 | CHARGER_STAT | INPUT; polarity inverted vs Ag105 (LOW = charging) | CR J1 pad 3 |
-| 18, 19 | SDA, SCL | I2C 400 kHz (100 kHz fallback), MB pull-ups 2.7 kOhm | CR J1 pads 8, 7 |
+| 18, 19 | SDA, SCL | I2C 100 kHz, MB pull-ups 10 kOhm as built (PM9 withdrawn, design r9-30) (**superseded 2026-11-16:** "I2C 400 kHz (100 kHz fallback), MB pull-ups 2.7 kOhm") | CR J1 pads 8, 7 |
 | 20 | WDOG1_B_RSVD | Unconfigured until R5; no CR consumer | None |
 | 22 | CHG_IIN | INPUT_DISABLE, analog, 0.764 V/A | T17 |
 | 31 | FC_CHARGE_ENABLE | OUTPUT, never INPUT_PULLUP | T5 taps the EN net |
@@ -388,7 +434,7 @@ an analog channel.
 
 ### 7.4 Principal requirements
 
-The design document defines the requirements as FR-01 to FR-49 and invariants I-1 to I-9. Table 7.2 lists the items
+The design document defines the requirements as FR-01 to FR-51 (**superseded 2026-11-15:** "FR-01 to FR-49") and invariants I-1 to I-9. Table 7.2 lists the items
 that carry the r9 safety argument.
 
 Table 7.2. Principal firmware requirements.
@@ -413,6 +459,27 @@ Table 7.2. Principal firmware requirements.
 The lead-alive rule in Table 7.2 has a known gap. An open T17, or a T17r-T17 short, can make proof (d) pass falsely;
 the lead-alive agreement is the only guard against this case.
 
+Table 7.3 lists the firmware criteria of revisions r9-25 and r9-26 (design document G.1, G.2 and change rows r9-25 and
+r9-26).
+
+Table 7.3. Firmware criteria added or changed in r9-25 and r9-26.
+
+| Requirement | Content |
+|---|---|
+| FR-01 CHG_IIN gate (r9-25) | CHG_IIN, and every check based on it (FR-11, FR-20, FR-33, T10 proof (d)), is ignored unless V_chg > 10.2 V and CHG_EFUSE_FLT is HIGH (TCKE1401NM DS Rev. 3.0 Table 10.1 Note 13) |
+| FR-01 analog pads (r9-26) | Pins 22, 24-26 and 38-41 are set `INPUT_DISABLE` in `setup()` before the FR-45 timer starts, so the pad keeper never loads a divider |
+| FR-12(a2) (r9-25) | The D-MT-EN short check fails if dV_rgn > 0.2 x dV_bus, evaluated only when dV_bus >= 2 V; a smaller window is inconclusive, not a pass |
+| FR-12(b1) (r9-25) | The stuck-path test passes if V_chg < 12.0 V at 0.5 s, or if the mean V_chg slope over 0.2-0.4 s is -1.0 V/s or steeper |
+| V_chg for V_rgn (r9-25, J.2 item 81) | Wherever REGEN is closed, a rule that compares V-MOT with V_bus uses V_chg (pin 38); V_rgn serves coarse checks only |
+| G.1 ADC (r9-25, r9-26) | REG2F = 0x3E and REG30 = 0xF0 in Run (IBUS and IBAT only); REG2E = 0xA0 in Run and 0xE0 for a one-shot; the T-B-16 diagnostic mask is REG2F = 0x3C |
+| FR-02 (r9-26) | `FAULT_I2C_CHARGER` and `FAULT_CHARGER_STAT` are retired; a BQ25798 NACK never enters State 99; 3 consecutive NACK frames set `CHG_I2C_DEAD` (count TODO(calibrate: T-B-20)) |
+| FR-28 (r9-26) | The RTWDOG feed sits in a `loop()` block entered once per FR-45 tick advance; the timer never feeds |
+| FR-50 `OV_CHG` (r9-26) | With REGEN held HIGH, the existing single-sample latch at 24.0 V latches State 99 mid-brake once V-MOT exceeds 24.15 V; the value, the response and the filter stay open for the firmware round on the as-fitted OVP bands (J.2 item 74 ruled 2026-11-15, D-93) (**Superseded 2026-11-15, D-93:** "wait for the J.2 item 74 ruling"), and the code stays unchanged meanwhile |
+| FR-51 (r9-26) | A latched U101 in Run (an FR-23 EX2 episode with V_chg inside 10.76-19.50 V) sets `CHG_EFUSE_LATCHED`; P5 and QUAL go LOW, REGEN stays, and State 99 is not entered; the recovery is an operator decision |
+
+Table 7.3 adds two operator decisions to the firmware round: the FR-50 threshold, response and filter, and the FR-51
+recovery (Table 11.4).
+
 ### 7.5 IO CSV amendments
 
 The D.3 rows are applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv`, which is now the authoritative Teensy pin map.
@@ -424,6 +491,9 @@ The applied CSV replaces rows 5, 6 and 31 and amends the notes of rows 27-30 and
 FREE_21 and FREE_23; row 10 notes the SPI CS0 default. Rows 28, 30 and 31 state that a pull-up lifts the EN net to about
 1.02 V nominal and 0.69-1.68 V over tolerance (H.24(b)), which can exceed the RT1987 VEN_R maximum of 1.4 V. Row 31 states
 the FR-49 rule: outside State 98, firmware raises FC_CHARGE_ENABLE only with REGEN_ENABLE HIGH. Row 7 is unchanged.
+Row 22 still names the TPS26630 IMON gain of 27.9 uA/A. Design-document D.3 proposes the TCKE1401NM text (27.9 uA/A
+typical; 17.58-38.22 uA/A at 0.6-1 A and unspecified below 0.6 A, TCKE1401NM DS Rev. 3.0 Table 10.2), and that one
+CSV edit is pending (REVIEW R2-FW-10).
 
 ## 8. Physical implementation
 
@@ -443,9 +513,10 @@ the MB exposed under the CR. (**Superseded 2026-11-13, D-62:** "trimmed to a con
 rectangle (LAYOUT_DECISIONS D-60). The trimmed outline has an area of 2241.6 mm2 ... at x 18.58-58.60 ... so the -x
 vertices sit at x 18.58 (0.004 mm outside the D-39 edge) and a head disc can overhang the edge by up to 0.052 mm".)
 (**Superseded 2026-11-13, D-60:** "The CR is a removable plug-on rectangle at x 18.584-67, y 7-94" and "It has no tab,
-chamfer, concave corner or mounting hole".) Samtec SSQ-110-01-L-S (pins 1-10, x 45.998 column) and SSQ-112-01-L-S
+chamfer, concave corner or mounting hole".) Samtec SSQ-110-01-G-S (pins 1-10, x 45.998 column) and SSQ-112-01-G-S
 (pins 11-22, x 20.998 column) sockets are soldered into the 22 MB CHG holes. TSW-110-07-L-S and TSW-112-07-L-S strips
-sit with their bodies on the CR underside. All 22 positions are populated.
+sit with their bodies on the CR underside. All 22 positions are populated. (**Superseded 2026-11-15, REVIEW R2-INT-4:** "SSQ-110-01-L-S" and "SSQ-112-01-L-S";
+the ordered sockets have -G plating, `bom_2026-11-14/digikey_import.csv`.)
 
 The stack has a hard stop where each TSW body seats on its SSQ face. The CR underside is then 11.05 mm above the MB top,
 and the CR top is at 12.65 mm. TSW in SSQ is rated 6.3 A per pin with two positions powered. The design powers four
@@ -571,9 +642,25 @@ C115, C130, C132, D105, D106, R122, R130, R131B, R147, R184 to R189, U110 and W3
 no clear position on the trimmed board, so 19 references are on F.Fab only", the D-60 figures.)
 (**Superseded 2026-11-13, D-60:** "60 of the 78 references", "26 of them" and "18 references are on
 F.Fab only", the D-59 figures before the trim.) In the dense rows, a reference can sit up to 3.0 mm from the
-courtyard of its part, so the interactive BOM (`fab/cr_2026-11-13/assembly/cr_ibom.html`) is the assembly reference.
+courtyard of its part, so the interactive BOM (`fab/cr_2026-11-14/assembly/cr_ibom.html`, written by `gen/export.sh
+cr 2026-11-14` and written again on 2026-11-15) is the assembly reference (**superseded 2026-11-15, REVIEW R2-DOC-7:**
+"; until then `fab/cr_2026-11-13f/assembly/cr_ibom.html`"). (**Superseded
+2026-11-14, REVIEW DOC-2:** "`fab/cr_2026-11-13/assembly/cr_ibom.html`", which shows the pre-D-66 J101 header.)
 `cr/silk_refs.md` lists every reference. (Superseded 2026-11-13, D-59: "Reference designators are printed on the top
 silkscreen".)
+
+**Amended 2026-11-14 (LAYOUT_DECISIONS D-72 to D-78).** On the current CR, 54 references are on F.Silkscreen, 7 on
+B.Silkscreen (mirrored, over the part: C102a, C102c, C119, C131, R107, U107, U119) and 17 on F.Fab only. On the EIB,
+18 of 26 fitted references are on the top side, and C201, C202, R251, R252, R254, R271, U201 and U202 have bottom-side
+texts. The bottom-side references can be read only before the CR is plugged onto the MB and before the EIB is mounted.
+The silkscreen also carries pin-1 dots on the ICs and SOT diodes, cathode bars on D103 and D107, the J101 and J201
+maps ("J101 top view", "J201 top view") and the W3, W6, W7 and E labels. J1 pin 18 joins the F.Cu VCHG pour solidly
+(D-75), so its joint needs more heat than pin 19 or W3. `cr/silk_refs.md` and `eib/silk_refs.md` give the current
+placement.
+
+**Amended 2026-11-15 (LAYOUT_DECISIONS D-85, D-86).** The CR carries "VIN1" beside W1 (to EVM J1 pin 2, VIN1) and
+"GND" under W2 (to EVM J1 pin 1), and the W1 reference stands beside W1. The EIB carries an F.Silkscreen number beside
+every E pad (E8, E3, 4, E2, E7, E1, E5 and E6; "E4" has no legal position), and the bottom E1 label reads "E1 JP12.1".
 
 ### 8.4 Permit gate implementation
 
@@ -603,9 +690,12 @@ R131A/R131B and checks the release at the EVM pin. It also meters R272 and R272b
 ### 8.5 J-TAP and leads
 
 J-TAP (J102) is a Molex Micro-Fit 3.0 dual-row 2 x 5 THT header, Molex 43045-1012, at 3.00 mm pitch on the +x side of
-the CR. It mates with the Molex 2147561101 cable assembly: a Micro-Fit 3.0 female-to-pigtail lead, dual row, 10
-circuits, 150 mm. The wire gauge and insulation of the cable are TODO(verify: Molex 2147561101). (**Superseded
-2026-11-13:** "It mates with the Molex 2147581101 cable assembly"; 2147581101 is the male version.) Table 8.4 gives the
+the CR. The operator builds the mating harness from workshop stock (operator ruling 2026-11-13, r9-22: "I'll deal
+with the J-TAP cable with whatever materials I have in my workshop"), a 2 x 5 Micro-Fit 3.0 mate whose cavities are
+checked against Table 8.4 (design-document A.8 and r9-13 map) before the first power-up. (**Superseded 2026-11-14,
+REVIEW DOC-7:** "It mates with the Molex 2147561101 cable assembly: a Micro-Fit 3.0 female-to-pigtail lead, dual
+row, 10 circuits, 150 mm. The wire gauge and insulation of the cable are TODO(verify: Molex 2147561101).")
+(**Superseded 2026-11-13:** "It mates with the Molex 2147581101 cable assembly"; 2147581101 is the male version.) Table 8.4 gives the
 cavity map of design change row r9-13 (D-46).
 
 The operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
@@ -648,13 +738,18 @@ Table 8.5. W leads.
 
 | Lead | Conductor | Far end | Disconnects at |
 |---|---|---|---|
-| W1, W2 | 20 AWG twisted pair, fixed 0.30 m +- 10 mm | EVM J1 pins 2 (VIN1), 1 (GND) | EVM J1 screw terminal |
+| W1, W2 | 20 AWG twisted pair, fixed 0.30 m +- 10 mm; CR labels "VIN1" and "GND" (D-85); W1/W2 identity metered before soldering (PM4 (2b), T-A-06) | EVM J1 pins 2 (VIN1), 1 (GND) | EVM J1 screw terminal |
 | W3, W4 | 18 AWG twisted pair | EVM J5 pins 1 (BATTERY), 3 (GND) | EVM J5 screw terminal |
-| W5 | 14-way flat cable, Samtec FFSD-07-D-12.00-01-N | EIB J201 | IDC sockets at both ends |
+| W5 | nine soldered wires, J101.n to J201.n (Table D-66); wire type TODO(verify: operator, gauge and insulation; the 1.0 mm hole is a placeholder for 26/28 AWG) (**superseded 2026-11-14:** "14-way flat cable, Samtec FFSD-07-D-12.00-01-N") | EIB J201 | soldered at both ends (D-66; **superseded 2026-11-14:** "IDC sockets at both ends") |
 | W6 | 26 AWG twisted pair (only with a pack NTC) | EVM J7 pin 1 | EVM J7 |
-| W7 | 28 AWG twisted triple | EVM J8 pins 2, 3 | Molex KK 254 housing |
+| W7 | 28 AWG twisted triple | EVM J8 pins 2, 3 | soldered to the J8 pins (D-66; **superseded 2026-11-14:** "Molex KK 254 housing") |
 
-Every lead in Table 8.5 disconnects at the EVM or EIB end, so the CR lifts off without desoldering.
+Since D-66, W5 is soldered at both J101 and J201, and W7 is soldered to the EVM J8 pins. The CR therefore comes off
+the MB only after W5 and W7 are desoldered at one end, or together with the EIB and the EVM plate as one unit. Which
+end is desoldered is TODO(decide: operator). Design-document A.3 (r9-25) and PM6 now state both removal methods and
+leave the end open (**superseded 2026-11-15:** "design-document A.3 and PM6 do not yet state the procedure (REVIEW
+DOC-4, INT-3)"). (**Superseded 2026-11-14:** "Every lead in Table 8.5 disconnects at the EVM or EIB end, so the CR lifts off
+without desoldering.")
 
 ### 8.6 EIB and EVM
 
@@ -664,11 +759,30 @@ ILIM_HIZ hold from ILIM_REL_B. Channel 3 drives the Q202 FC current clamp leg fr
 EVM only through E8 at TP49 and the CR only through R273 10 ohm.
 
 The EIB DNP set is U203, U204, C203, C204 and R258-R265; leads E4 and E6 are not built, and the copper is unchanged.
-On the CR, J101 stays 2 x 7 with ribbon conductors 11 and 13 not connected.
+On the CR, J101 is a 3 x 3 grid of plated wire pads for nine soldered W5 wires (D-66; Table D-66 gives the two grid
+orders, which differ by design). (**Superseded 2026-11-14, D-66:** "On the CR, J101 stays 2 x 7 with ribbon
+conductors 11 and 13 not connected.")
 
-A short between J101 pin 9 (GND) and pin 10 (RFC_OFF) drives up to 33 mA through R132 100 ohm (J.2 item 70(a)). This
-current exceeds the LVC recommended output current. A short between pins 8 and 9 does likewise for ILIM_REL_B. R175
-limits the current and sags the CR rail; design-document section B.6 had called these pairs safe, TODO(calc).
+R131B and R132 are 4.99 kOhm since r9-12 (ruling R2), so a 9-10 or 8-9 short no longer reaches 33 mA. D-66 changed the
+neighbours: on the CR grid, CE_DRV_J (pad 5, R130 100 ohm) and ILIM_REL_A (pad 7, R131A 100 ohm) now sit next to GND
+pads. A single bridge on CR 5-9 or 7-3 pulls the CR rail to 1.97-2.36 V (`sim/permit/RESULTS.md` section 5.8). R130
+and R131A stay 100 ohm (LAYOUT_DECISIONS D-80); the mitigation is the staged T-A-06 metering of design r9-26 (D-80
+ruling, 2026-11-16) (**Superseded 2026-11-16, D-80 ruling:** "the mitigation, the staged T-A-06 metering of design
+r9-26 or a grid reorder, is an operator question (section 11)") (**Superseded 2026-11-16, design r9-26:** "a post-solder isolation check
+of the orthogonal pad pairs or a grid reorder"). T-A-06 now meters the grids in stages, against
+bare-board references and a post-wire table (r9-26, REVIEW R2-INT-1). (**Superseded 2026-11-14:** "A short between J101 pin 9
+(GND) and pin 10 (RFC_OFF) drives up to 33 mA through R132 100 ohm (J.2 item 70(a)). This current exceeds the LVC
+recommended output current. A short between pins 8 and 9 does likewise for ILIM_REL_B. R175 limits the current and
+sags the CR rail; design-document section B.6 had called these pairs safe, TODO(calc).")
+
+**Amended 2026-11-16 (LAYOUT_DECISIONS D-80 addendum; design r9-28).** The J101 and J201 pads are plated
+through-holes with a 1.0 mm drill and a 1.8 mm pad on every copper layer, with mask open on both sides. A bridge or a
+stray strand can therefore form on both outer layers. The worst pair is CE_DRV_J to ILIM_REL_A during qualification,
+where EN_CHG = 0 is the only remaining barrier; no pair damages a part. Five masked-copper paths near the grids, among
+them the CR /GND pour at 0.127 mm from the J101 signal pads, need a mask breach to bridge. **Ruled 2026-11-16
+(LAYOUT_DECISIONS D-80 ruling; design r9-29):** the copper of both boards stays, and the staged T-A-06 metering is
+the mitigation; the grid reorder and the CR J101 pour clearance are declined, and the T-A-06 text does not change.
+(**Superseded 2026-11-16, D-80 ruling:** "The question stays open.")
 
 The EVM carries R256 200 kOhm and C252 2.2 nF across JP21, and R272/R272b 47.0 kOhm as redundant /CE pull-ups. The EVM
 rests on its stock bumpons on an insulating plate, held by edge clamps with silicone pads and not drilled.
@@ -684,14 +798,15 @@ negative is PCB ground by design.
 ### 8.8 MB modifications
 
 The MB keeps every trace (PM8: no trace cuts) and keeps ROS fitted. Steps PM7, PM10 and PM11 are deleted or withdrawn
-(Table 3.2). The remaining modifications are:
+(Table 3.2), and PM9 is withdrawn by design r9-30. The remaining modifications are:
 
 - PM1: remove the Ag105 (CHG).
 - PM2: replace C-D8 and C-D10 with 10 uF >= 35 V 0805.
 - PM3: fit R170 and R171 at C-D6 and C-D2 for T1 and T2.
 - PM4: fit the SSQ sockets and mate the CR.
 - PM6: build the J-TAP harness.
-- PM9: change RSDA and RSCL to 2.7 kOhm.
+- PM9: withdrawn 2026-11-16 (design r9-30, D-96). RSDA and RSCL stay 10 kOhm and the charger I2C runs at 100 kHz.
+  (**Superseded 2026-11-16:** "PM9: change RSDA and RSCL to 2.7 kOhm.")
 
 ## 9. Current status
 
@@ -705,6 +820,19 @@ re-frozen at sha256 `608bbf977803bc40...` (D-53, Table D-53; superseded in r9-13
 freeze with connectivity unchanged against r9-11). The netlist export reports
 annotation errors for the six letter-suffix designators C102a, C102b, C102c, R106s, R131A and R131B; these references are
 accepted.
+
+**Amended 2026-11-14 (REVIEW DOC-11; LAYOUT_DECISIONS Table D-53b).** D-66 and D-67 reopened the freeze without a
+recorded re-freeze, and D-82 then synchronized the part fields with the ordered BOM. The current `cr/cr.net` has 78
+parts and 77 nets (54 connected, 23 single-pin), 258 pin nodes, ERC 0 / 0, and the date-stripped sha256
+`3cd26f60d09e7b84...`. After D-67 it was `65c7d9800729803c...` (date-stripped). Net membership is unchanged by D-82.
+(**Superseded 2026-11-14:** "78 parts, 79 nets" and the re-freeze at sha256 `608bbf977803bc40...` as the current
+identity.)
+
+**Amended 2026-11-15 (LAYOUT_DECISIONS D-88).** Phase C corrected the J1 and J102 Note fields and added Note fields
+to U102, U103, U119, U120, D103 and J101 (CR) and J201 (EIB). Net membership, values and MPNs are unchanged. The
+current `cr/cr.net` has 78 parts and 77 nets, ERC 0 / 0, and the date-stripped sha256 `37ef45c1f4e43f35...`; the EIB
+netlist is unchanged (`774519aa10f3da64...`). (**Superseded 2026-11-15:** the date-stripped sha256
+`3cd26f60d09e7b84...` as the current CR identity.)
 
 The new-outline generator exists (D-50 step 4, LAYOUT_DECISIONS D-52). The new modules `gen/mb_brd.py` and
 `gen/cr_geometry.py` read the MB data from the `.brd`, `gen/layout_cr.py` holds the region table (Table D-52), and the CR
@@ -861,6 +989,30 @@ support rows stay stale until the A.3 lead route is re-derived on the new outlin
 them.
 Nothing is ordered, and no price, stock or SKU is verified on a live vendor page.
 
+**Amended 2026-11-14 (REVIEW DOC-2, BOM-0; LAYOUT_DECISIONS D-83).** The ordering set is `bom_2026-11-14/`: per-unit
+`cr_bom.csv`, `eib_bom.csv` and `system_bom.csv`, `digikey_import.csv`, `mouser_import.csv` and `digikey_skipped.csv`,
+with `bom_2026-11-14/README.md`. One unit has one BQ25798EVM, one CR and one EIB; the board orders are 6 CR (two OSH
+Park lots of 3) and 3 EIB. `bom_2026-11-13/` is the record of the 2026-11-13 uploads, and `bom_2026-11-11/` is
+history. Build a fresh Digi-Key list from `bom_2026-11-14/digikey_import.csv` (`bom_2026-11-14/README.md` section
+4.1). Do not reuse the 2026-11-13b list: it still holds the three pre-D-67 resistors and the 2147561101 cable. Four
+labelled optional lines are in the opt-in file `bom_2026-11-14/digikey_optional.csv`: the D103 alternate MBRA2H100T3G
+(2 for a test fit, order 3), the C108 470 pF option and two bench-only capacitors (LAYOUT_DECISIONS D-79, D-81).
+(**Superseded 2026-11-14, fix round 2026-11-15:** "Four labelled lines at the end of the import file are
+optional".) (**Superseded 2026-11-14:** "The ordering BOM
+`bom_2026-11-11/ordering_bom.csv` ... includes two BQ25798EVM units, five CR boards and five EIB boards" as the
+current BOM; and the instruction of `bom_2026-11-13/README.md` section 4.3, "Delete those three lines from the
+Digi-Key list that was built from the second upload".)
+
+**Amended 2026-11-15 (REVIEW R2-BOM-0, R2-BOM-5, R2-CRT-1; LAYOUT_DECISIONS D-89).** `gen/bom_split.py` regenerated
+the set in place. The main Digi-Key file is unchanged at 62 lines and about USD 91.49, and the Mouser file is unchanged
+at 4 lines. The opt-in file now holds nine lines: the four alternate and bench lines above and five SPARE lines
+(TLV3012BIDBVR x 2, GMC21X5R106K50NT x 5, TSW-112-07-L-S x 1, SSQ-110-01-G-S x 1, SSQ-112-01-G-S x 1). The nine
+lines add about USD 25.80, of which the SPARE lines are USD 21.07 (`bom_2026-11-14/README.md` section 5.4). Design
+section E reads "2 (+2)" and "5 (+3)" for the 10 uF parts, whereas the main line orders exactly 7; the
+GMC21X5R106K50NT SPARE line closes that difference only if the operator adds it. The Mouser file holds R101, R103 and
+R104; the J.2 item 74 ruling of 2026-11-15 keeps all three (D-93, Table 11.4) (**Superseded 2026-11-15, D-93:**
+"which a J.2 item 74 retune would change (Table 11.4)").
+
 ### 9.3 CR fab package
 
 The CR package `fab/cr_2026-11-13/` is generated from the routed board of section 9.1 and is not ordered; it awaits the
@@ -903,6 +1055,27 @@ re-exported with `gen/export.sh cr <date>` once the board is final.
 
 **Amended 2026-11-13 (D-69):** the stencils are 4 mil stainless from OSH Stencils, one per board, and the U101 exposed-pad paste windows follow the via keep-outs at about 55 % coverage (`LAYOUT_DECISIONS.md` D-69). The current package is `fab/cr_2026-11-13f/`; only its top paste layer differs from `fab/cr_2026-11-13e/`. Stencil uploads: `fab/cr_2026-11-13f/gerbers/cr-F_Paste.gtp` and `fab/eib_2026-11-13c/gerbers/eib-F_Paste.gtp`.
 
+**Amended 2026-11-14 (LAYOUT_DECISIONS D-72 to D-78, D-82).** The current package is `fab/cr_2026-11-14/`, written on
+2026-11-15 by `gen/export.sh cr 2026-11-14` followed by `gen/fab_readme.py cr 2026-11-14`. Its tracks, vias, pads and
+zone outlines equal `fab/cr_2026-11-13f/`; the F.Cu pour fill changes within 1.7 mm of J1 pin 18 (D-75).
+(**Superseded 2026-11-14, package exported:** "The next package is `fab/cr_2026-11-14/`, to be written by
+`gen/export.sh cr 2026-11-14` followed by `gen/fab_readme.py cr 2026-11-14`. Its copper equals
+`fab/cr_2026-11-13f/`.") The silkscreen, the stack-up block (job file) and the assembly fields change. The export now
+runs the NPTH gate `gen/npth_check.py` (D-77). The stencil upload becomes `fab/cr_2026-11-14/gerbers/cr-F_Paste.gtp`.
+(**Superseded 2026-11-14, package exported:** "`fab/cr_2026-11-13f/` stays the record until then.")
+
+**Amended 2026-11-15 (LAYOUT_DECISIONS D-85, D-87 to D-90).** `fab/cr_2026-11-14/` was written again in place on
+2026-11-15 by `gen/export.sh cr 2026-11-14`, after the D-85 labels and the D-88 Note fields. Against the first
+2026-11-14 export, only `gerbers/cr-F_Silkscreen.gto` and `docs/cr.net` differ; the drill, copper, mask, paste,
+position and BOM files are identical, and the F.Paste layer still equals `fab/cr_2026-11-13f/`. ERC gives 0
+messages, DRC 0 violations, 0 unconnected items and 0 parity issues (`cr/drc.rpt`, 2026-11-15T05:29:19), and the
+NPTH check passes on 6 holes. The constraint check has 129 rows: 107 pass, 1 pass with listed exceptions, 3
+exemption rows, 18 information rows and 0 FAIL. The KiKit JLCPCB and PCBWay presets still write no `bom.csv`, so the
+package README sends those assembly orders to `assembly/cr-bom.csv`. `fab/cr_2026-11-14/` is the only current CR
+package. `fab/cr_2026-11-13f/` and every earlier CR package (`fab/cr_2026-11-13/` to `fab/cr_2026-11-13e/`,
+`fab/cr_2026-11-13b_oshpark/`) are superseded and must not be uploaded; they carry the old silkscreen and the old
+MPNs. Dated packages are not edited, so `fab/cr_2026-11-13f/` carries no banner of its own (REVIEW R2-DOC-7; D-90).
+
 The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
 
 ### 9.4 EIB fab package
@@ -919,6 +1092,23 @@ as the record.
 **Amended 2026-11-13 (D-66):** J201 is now a 3 x 3 grid of plated wire pads for the nine soldered W5 wires, and the area around it was re-routed (`LAYOUT_DECISIONS.md` D-66). The current package is `fab/eib_2026-11-13b/` (ERC 0, DRC 0 / 0 / 0); `fab/eib_2026-11-13/` is superseded.
 
 **Amended 2026-11-13 (D-68):** the AGND pours keep 0.5 mm from the hand-soldered E lead pads on both layers (operator ruling 2026-11-13, chat: "Widen clearance"; `LAYOUT_DECISIONS.md` D-68). The current package is `fab/eib_2026-11-13c/` (ERC 0, DRC 0 / 0 / 0); `fab/eib_2026-11-13b/` is superseded. The order quantity is 3 (operator ruling 2026-11-13, chat: "Order 3").
+
+**Amended 2026-11-14 (LAYOUT_DECISIONS D-70 to D-78, D-82).** The current package is `fab/eib_2026-11-14/`, written on
+2026-11-15 by `gen/export.sh eib 2026-11-14` followed by `gen/fab_readme.py eib 2026-11-14`. (**Superseded
+2026-11-14, package exported:** "The next package is `fab/eib_2026-11-14/`, to be written by `gen/export.sh eib
+2026-11-14` followed by `gen/fab_readme.py eib 2026-11-14`.") Its copper traces equal
+`fab/eib_2026-11-13c/`; the AGND pour fill changes at J201 (D-70). The paste layer has no apertures on the 14 DNP
+footprints (D-71), so the stencil upload becomes `fab/eib_2026-11-14/gerbers/eib-F_Paste.gtp`. The silkscreen reads
+"EIB r8 2026-11-14". `fab/eib_2026-11-11/` predates D-63, D-66 and D-68 and must not be uploaded.
+
+**Amended 2026-11-15 (LAYOUT_DECISIONS D-86, D-87, D-90).** `fab/eib_2026-11-14/` was written again in place on
+2026-11-15 by `gen/export.sh eib 2026-11-14`, after the D-86 E-pad labels. Against the first 2026-11-14 export, only
+the two silkscreen Gerbers differ. ERC gives 0 messages, DRC 0 / 0 / 0 (`eib/drc.rpt`, 2026-11-15T05:36:57), and the
+NPTH check passes on 2 holes. The EIB constraint check has 6 pass rows and 2 information rows; the A.9 outline row
+now measures Edge.Cuts at 24.000 x 38.000 mm against 24.0 x 38.0 mm. The paste layer has 62 flashes (D-71).
+`fab/eib_2026-11-14/` is the only current EIB package. `fab/eib_2026-11-13c/` and every earlier EIB package
+(`fab/eib_2026-11-11/`, `fab/eib_2026-11-13/`, `fab/eib_2026-11-13b/`) are superseded and must not be uploaded
+(REVIEW R2-DOC-7).
 
 ### 9.5 Archive and certification
 
@@ -950,8 +1140,9 @@ followed an IPC-2221 figure was the IPC-2152 verdict.
 
 ### 9.7 IO CSV
 
-The D.3 rows are applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv` (section 7.5). No IO CSV action remains for the
-charger path.
+The D.3 rows are applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv` (section 7.5). One IO CSV edit remains for the
+charger path: the row-22 text of section 7.5 (REVIEW R2-FW-10). (**Superseded 2026-11-15:** "No IO CSV action remains
+for the charger path.")
 
 ## 10. Implementation plan in steps
 
@@ -1006,12 +1197,17 @@ The following decisions belong to the operator. Each item names its record. Chec
 002, `docs/reviews/charger-design/run-002-2026-11-12.md`, section "Items for operator ruling at check-in 2") is closed.
 The operator approved all fixes on 2026-11-12. Rulings R1 to R6 are the orchestrator's defaults, recorded in design
 change row r9-12, and the operator may override any of them. The next operator action is check-in 4: the pre-order
-review of the routed CR, the CR fab package `fab/cr_2026-11-13/` and the EIB fab package `fab/eib_2026-11-13/`. No
-operator-review item blocks the bare-board order (item 29 closes the VCHGOUT necks by acceptance). `LAYOUT_DECISIONS.md`
+review of the routed CR, the CR fab package and the EIB fab package (**amended 2026-11-14:** the packages are
+`fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`, written again on 2026-11-15 (**superseded 2026-11-15, REVIEW
+R2-DOC-7:** "once exported, until then `fab/cr_2026-11-13f/` and `fab/eib_2026-11-13c/`"); **superseded 2026-11-14:** "`fab/cr_2026-11-13/`" and "`fab/eib_2026-11-13/`"). No
+operator-review item blocks the bare-board order (README item 29 closes the VCHGOUT necks by acceptance). `LAYOUT_DECISIONS.md`
 section 11 item 3 and the drilled-versus-finished TSW hole question under item 5 of that section stay open and do not
-block the order; item 26 (the order quantity, 6) is closed by operator ruling 2026-11-13 (design session, chat
+block the order; README item 26 (the order quantity, 6) is closed by operator ruling 2026-11-13 (design session, chat
 2026-11-13: "Use 6"). `MORNING_REVIEW_2026-11-13.md` gives the decisions of the routing round with their reversal paths
-and the items for this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (placement images)".)
+and the items for this review; its state is superseded by `LAYOUT_DECISIONS.md` section 1. The operator questions
+of the 2026-11-14 round and its phase C are listed at the end of this section (Table 11.4). In this section, "item n"
+in running text and "README item n" mean item n of the numbered list below; the Record columns of Tables 11.1, 11.2
+and 11.4 name `LAYOUT_DECISIONS.md` section 11 items, as each table states (REVIEW R2-DOC-14). (Superseded 2026-11-13: "The next operator action is check-in 3 (placement images)".)
 (**Superseded 2026-11-13:** ", with the VCHGOUT ruling of item 29".) (**Superseded 2026-11-13, quantity ruling:** "the
 drilled-versus-finished TSW hole question under item 5 of that section, and item 26 of this section stay open".)
 
@@ -1147,7 +1343,7 @@ Table 11.1. Former CR bare-board blockers (operator ruling 2026-11-13, Review 2/
 |---|---|---|
 | BAV199 D104 to D106 (SOT-23) pinout | Closed 2026-11-13. Nexperia BAV199 product data sheet v.4 (1 April 2023; supersedes v.3 of 2020-09-01, whose only change is "Product changed to non automotive", Table 8), section 5 Table 2: pin 1 A1 (anode, diode 1), pin 2 K2 (cathode, diode 2), pin 3 K1 and A2. The board matches: pad 1 /GND, pad 2 /3V3, pad 3 /N_H1P (D104), /N_H1M (D105) and /N_UVP (D106). Operator: "Yes" | Item 9 |
 | SOT-23 reflow footprint of D104 to D106 | Closed 2026-11-13. The footprint `SOT-23_CrtYd0.25` has 1.475 x 0.6 mm pads at 1.9 mm pitch, with the pad rows 1.875 mm apart (pads 0.20 to 1.675 mm from the centre line). The data-sheet Fig. 8 lead width is 0.38 to 0.48 mm, below the 0.6 mm pad width, and the lead tips lie 1.05 to 1.25 mm from the centre line, which leaves a toe pad of 0.43 mm or more. The Fig. 9 reflow lands are about 0.6 x 0.7 mm, with the rows about 2.0 mm apart. The KiCad pads are longer toward the body; this is a fillet difference, not a connectivity difference. The land-pattern refinement is dropped. Operator: "Close, no need to refine if the current footprint is verified compatible" | Item 10 |
-| In2.Cu VCHGIN strap | Closed 2026-11-13 on IPC-2152. The required section is 87.4 mil2, which is 3.221 mm at 17.5 um. The strap section of 4.174 mm (113.2 mil2) gives 2.75 A at a 10 degC rise, and a 7.4 degC rise at the 2.41 A basis. The OSH Park 4-layer page (`docs.oshpark.com/services/four-layer/`, read 2026-11-13) gives the inner layers as "0.68 mil (0.0175mm) 0.5 oz copper clad"; clad copper is not plated, so the finished thickness is 17.5 um (at 17.3 um the result is 2.73 A). The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and needs 5.258 mm (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc_out.txt`); it does not pass, and the closure rests on IPC-2152 alone. Operator: "Accept, use IPC-2152"; on 0.5 oz inner copper, "Yes" | Item 2; design document H.25 |
+| In2.Cu VCHGIN strap | Closed 2026-11-13 on IPC-2152. The required section is 87.4 mil2, which is 3.221 mm at 17.5 um. The strap section of 4.174 mm (113.2 mil2) gives 2.75 A at a 10 degC rise, and a 7.4 degC rise at the 2.41 A basis. The OSH Park 4-layer page (`docs.oshpark.com/services/four-layer/`, read 2026-11-13) gives the inner layers as "0.68 mil (0.0175mm) 0.5 oz copper clad"; clad copper is not plated, so the finished thickness is 17.5 um (at 17.3 um the result is 2.73 A). The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and needs 5.258 mm (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc_out.txt`); it does not pass, and the closure rests on IPC-2152 alone. Operator: "Accept, use IPC-2152"; on 0.5 oz inner copper, "Yes". **Amended 2026-11-15 (REVIEW R2-DOC-12; design document A.8, H.25, J.2 item 82):** the closure rests on the 2.41 A TPS26630 basis. The TCKE1401NM I_LIM maximum is about 2.77 A (an extrapolation, D-67). At 2.77 A the D-57 section rises 10.2 C and the D-56 section 11.9 C against the 10 C basis, and the J1.10 joint perimeter of 3.456 mm lies below the required 4.234 mm. The over-basis current flows only in an I_LIM dwell of at most 190 ms (tCL_PLIM, TCKE1401NM DS Rev. 3.0 Table 10.3), for which the steady-state chart is conservative. The row is open again as an operator question (Table 11.4) | Item 2; design document H.25; J.2 item 82 |
 | VCHGOUT path, U101 OUT to W1 (the half of item 2 outside the ruling) | Closed 2026-11-13 by acceptance. R9.H26 finds two F.Cu-only necks below the IPC-2152 long-conductor basis at 3.21 A (Table 11.3); they stay as they are, and the board does not change. The acceptance rests on the ruling, not on a pass: no short-neck calculation is on record. Operator (design session, chat 2026-11-13): "Accept short necks" (**Superseded 2026-11-13, VCHGOUT ruling:** "Open 2026-11-13"; "the operator chooses acceptance, wider copper or a bench measurement") | Item 2; section 11 item 29 of this document |
 | OSH Park 4-layer stack-up | Closed 2026-11-13. The OSH Park 4-layer page (read 2026-11-13) gives 63 mil (1.6 mm), 1 oz outer copper (clad and plated), 0.5 oz inner copper, FR408-HR at 190 degC Tg, ENIG, purple SMOBC on both sides, and via tenting "Yes (filled hole and flat surface not guaranteed)". The alternate-stack-up notices are commented out in the page source, so none is active. Operator: "Yes" | Item 5 |
 | OSH Park quote | Closed 2026-11-13 as out of scope. Operator: "Quote is outside the scope of the project" | Item 7 |
@@ -1193,13 +1389,19 @@ Table 11.2. Parts-order and assembly items.
 
 | Item | Open question | Record |
 |---|---|---|
-| Ordering BOM | Every SKU, price, stock level and MOQ | `bom_2026-11-11/README.md` section 7 |
-| T-A-05 datasheet checks | D103, D107, J101, J201, W5 | Design document I |
-| Capacitors and MOSFET | C102a/b DC bias; C101 Murata part; BSS84 VGS(th) | Item 19 (C101) |
-| U101 stencil | Window-pane apertures for the exposed pad | Item 22 |
-| Leads | Molex 2147561101 cable wire gauge and insulation, TODO(verify: Molex 2147561101) (**Superseded 2026-11-13:** "Molex 2147581101 cable details"); W1/W2 stranding (section 11 item 7 of this document); W3/W4 1.5 mm hole against the Alpha 5857 conductor diameter | `bom_2026-11-11/README.md` section 7 |
+| Ordering BOM | Price and stock at checkout; the nine opt-in lines of `digikey_optional.csv`, four alternate or bench lines and five SPARE lines (**superseded 2026-11-15:** "the four optional alternate lines") | `bom_2026-11-14/README.md` sections 4 and 5 |
+| T-A-05 datasheet checks | D103 (criterion (4) pulse rating; the "VF at 3 A" limit; LAYOUT_DECISIONS D-79) and D107 (item 11) | Design document I |
+| Capacitors and MOSFET | BSS84 VGS(th); 2N7002BK Vgs(th) (item 33) | `bom_2026-11-14/README.md` |
+| Leads | W5 wire gauge and insulation (D-66 placeholder hole); J-TAP mate wire gauge against the R170/R171 joints, TODO(verify: workshop wire, T-A-05); W1/W2 stranding (section 11 item 7 of this document); W3/W4 1.5 mm hole against the Alpha 5857 conductor diameter | `bom_2026-11-11/README.md` section 7 |
 | TSW/SSQ contacts | Derating with four powered pins | Item 15 |
 | Workshop and consumables | BOM rows not yet verified | `bom_2026-11-11/README.md` section 7 item 20 |
+
+(**Superseded 2026-11-14, REVIEW DOC-2:** the rows "Ordering BOM | Every SKU, price, stock level and MOQ |
+`bom_2026-11-11/README.md` section 7"; "T-A-05 datasheet checks | D103, D107, J101, J201, W5"; "Capacitors and
+MOSFET | C102a/b DC bias; C101 Murata part; BSS84 VGS(th) | Item 19 (C101)"; "U101 stencil | Window-pane apertures
+for the exposed pad | Item 22"; and the "Molex 2147561101 cable wire gauge and insulation" entry of the Leads row.
+D-66 retires J101, J201 and W5 as parts; the C102a/b DC-bias item is closed (`bom_2026-11-14/README.md` Table 1, C102b row); C101 is the ordered
+KEMET part (item 19); D-69 closes item 22; the J-TAP cable is workshop stock (r9-22).)
 
 Table 11.3 gives the VCHGOUT necks of calculation R9.H26 on the D-62 board (item 29), at a 10 C rise, the 3.21 A basis
 and 35 um outer copper.
@@ -1220,6 +1422,39 @@ long-conductor chart is conservative for them".) Operator ruling 2026-11-13 (des
 "Accept short necks") accepts both necks as they are; the two FAIL rows remain the calculation result, and the
 acceptance rests on the ruling, not on a pass (item 29).
 
+Table 11.4 lists the operator questions of the 2026-11-14 round and of its phase C (2026-11-15). None of them blocks
+the bare-board order. The spare-U101 part of the J.2 item 84 question affects the Mouser order, so it needs a ruling
+before that order; the J.2 item 74 question was closed on 2026-11-15 with the Mouser file unchanged (D-93)
+(**Superseded 2026-11-15, D-93:** "The J.2 item 74 question and the spare-U101 part of the J.2 item 84 question affect
+the Mouser order, so they need a ruling before that order."). The SPARE lines affect the Digi-Key order. FW-0, FR-50 and FR-51 are
+preconditions of the firmware round, not of an order. "LAYOUT_DECISIONS item n" means item n of `LAYOUT_DECISIONS.md`
+section 11. (**Superseded 2026-11-15, REVIEW R2-DOC-0:** "Table 11.4 lists the operator questions of the 2026-11-14
+round. None of them blocks the bare-board order; the first two affect the parts order or the test plan. Item numbers
+refer to `LAYOUT_DECISIONS.md` section 11.")
+
+Table 11.4. Operator questions of the 2026-11-14 round and of its phase C (**superseded 2026-11-15:** "Operator
+questions of the 2026-11-14 round").
+
+| Question | Recommendation of the round | Record |
+|---|---|---|
+| J.2 item 74: the U101 OVP band against the VESC regen limit. As fitted, OVP rising is 21.588-25.019 V with pin leakage, which overlaps the 21.35-23.10 V chopper conduction onset, so U101 can trip in a hard brake. The options are a charger dropout on hard brakes, a VESC regen limit below the OVP rising minimum, or the lever (a) retune: R102 845 kOhm, R103 68.1 kOhm and R104 47.5 kOhm, all 0.1 %, give OVP rising 23.256-26.863 V, OVP falling 21.439-24.614 V and UVLO rising 9.092-10.571 V. The lever (a) maximum lies 0.66 V above the BQ25798 VBUS_OVP maximum 26.2 V (SLUSDV2C section 6.5, p.9), and the V_OVPR spread (1.100) prevents any divider from clearing both limits; a 0.5x string gives 23.163-26.180 V, TODO(recalc: sim 5 part b). A retune changes R103 and R104, and R101 if it moves to 7.87 kOhm, in `bom_2026-11-14/mouser_import.csv` | Closed 2026-11-15: the operator accepted the charger dropout on hard brakes; R101, R103, R104 and the Mouser file are unchanged, and FR-50 stays open for the firmware round (**Superseded 2026-11-15:** "rule before the Mouser order; the ruling also sets the FR-50 threshold") | design document J.2 item 74, FR-50; `sim/chopper/RESULTS.md` section 5.8; `sim/regen_nocut/RESULTS.md`; D-91; D-93 |
+| FR-50 `OV_CHG`: with REGEN held HIGH, the existing single-sample latch at 24.0 V latches State 99 mid-brake once V-MOT exceeds 24.15 V | choose the threshold, the response (State 99, a charger-only trip or a flag) and the filter on the as-fitted OVP bands (J.2 item 74 ruled 2026-11-15, D-93) (**Superseded 2026-11-15, D-93:** "together with J.2 item 74"); the code stays unchanged until then | design document FR-50; REVIEW R2-FW-0 |
+| FR-51: recovery of a latched U101 inside a Run | option (A), wait for Idle, or option (B), in-Run recovery with a retry cap | design document FR-51; REVIEW R2-FW-1 |
+| FW-0: `CLAUDE.md` sections 1-3 conflict with the r9 rules (section 2 requires REGEN_ENABLE LOW before FC_CHARGE_ENABLE, whereas FR-06 and FR-49 require the opposite; section 3 describes the Ag105) | amend `CLAUDE.md` before the firmware round; a firmware-round precondition, not an order item | design document D.5 items (7) and (8); REVIEW FW-0, R2-FW-4 |
+| J.2 item 77: the T2 tap interruption. As built, interruptions of 5-30 us release ILIM_HIZ with /CE LOW, worst 1.810 V and 50.7 us above VIH 1.0 V. C108 = 470 pF narrows the band to 5-20 us (1.545 V, 27.9 us) and is worse than as built in 49 of 576 matched decks by at most 5.0 mV and 0.34 us. C106 = C107 = 4.7 nF or 10 nF moves the hazard to interruptions of 30 us or 50 us and longer, with a full release for up to 0.48 ms or 1.23 ms, and fails T-B-06. C107 = 4.7 nF alone trips H1 falsely on a VBUS rise of about 2.9 V at 12 V/ms. No option removes the hazard | accept the present design with or without the C108 = 470 pF option, or open a design change (T2 tap redundancy or retention); the T-D-04 bench capture of real interruption durations is open | design document J.2 item 77, Table J.2-1; `sim/permit/RESULTS.md` section 5.6a, Table 5.4d; D-81, D-91, LAYOUT_DECISIONS item 32 |
+| J.2 item 78: the H1 fall worst case of 17.843 V with resistor TCR lies 3 mV above the VINDPM_STAGE1 minimum 17.84 V; the Monte Carlo maximum is 17.747 V | accept it on a statistical basis, or move the staged VINDPM raise one 100 mV code higher; T-C-02 at 0 C and 60 C measures the TCR term | design document J.2 item 78; `sim/comparators/RESULTS.md` section 5.2 |
+| J.2 item 82: the VCHGIN strap and the J1.10 joint at the 2.77 A I_LIM maximum (10.2 C and 11.9 C against 10 C) | accept the over-basis rise as transient-only (at most 190 ms), or reopen the strap | design document J.2 item 82, H.25; Table 11.1 |
+| J.2 item 83: /CHG_ARM has 5.25 mm of F.Cu track inside the D-36 divider-top zone, 0.224 mm from R114 pad 2 (/N_UVP) | Closed 2026-11-16: the operator declined the re-route, and D-94 records a D-36 exemption for /CHG_ARM. Conditions: a cold resistance check from J1.11 to R114 pad 2 on every assembled CR (below about 1 kOhm indicates a short), C108 fitted, flux cleaned around R114, C108 and D106, R114 pad 2 inspected under magnification; a CR copper re-spin for any other reason removes the track from the zone (**Superseded 2026-11-16, D-94:** "record a D-36 exemption for /CHG_ARM, or re-route (a copper change)") | design document J.2 item 83 (r9-28); `cr/constraint_check.md` D-36 metric row; D-87; D-94; LAYOUT_DECISIONS item 41 |
+| J.2 item 84: the U101 current-limit dwell (up to 190 ms at 23.8-65.4 W, up to 12.4 J per event) and the T-C-04 repetitions on the only U101 (5 of step (1), 5 of step (3), 3 fast-trip shorts, at most 1 of step (2)); the datasheet gives no safe operating area or repetitive rating, TODO(verify: Toshiba) | confirm the counts, decide whether to order a spare U101 before T-C-04 (Mouser), and rule whether step (2) runs | design document J.2 item 84, T-C-04; `sim/hardshort/RESULTS.md` section 5.7 |
+| J.2 item 85: C103 stays 1.0 uF or becomes a 4.7 uF 50 V 0805 part (MPN and DC-bias data TODO(verify)) | no recommendation; a 4.7 uF part needs a sim 1 grid re-run before T-C-04 | design document J.2 item 85 |
+| Opt-in SPARE lines of `bom_2026-11-14/digikey_optional.csv` (TLV3012BIDBVR x 2, GMC21X5R106K50NT x 5, TSW-112-07-L-S x 1, SSQ-110-01-G-S x 1, SSQ-112-01-G-S x 1; USD 21.07) | add the wanted lines to the Digi-Key order; without the GMC21X5R106K50NT line, design section E "2 (+2)" and "5 (+3)" must change to "2" and "5" | `bom_2026-11-14/README.md` section 5.4; D-89 |
+| D103: keep the ordered STPS2H100A or fit the onsemi MBRA2H100T3G (same land, cathode on pad 1, IFSM 130 A) | add the alternate line, restate the T-A-05 "VF at 3 A" criterion as read and recorded, run T-C-04 step (2) last or replace it by the 2 ohm fast-trip short | D-79, LAYOUT_DECISIONS item 30; design document J.2 item 79; `sim/hardshort/RESULTS.md` section 6 |
+| W5 single-bridge mitigation on the J101/J201 grids | Closed 2026-11-16 (D-80 ruling, design r9-29): option (a) is adopted, the copper stays, and the grid reorder is declined (operator: "Keep copper, meter"). (**Superseded 2026-11-16, D-80 ruling:** "Open.") The staged post-solder metering of T-A-06 (r9-26) is option (a); a grid reorder is a copper change. The D-80 addendum of 2026-11-16 records that the grid pads are plated through-holes, so a bridge can form on both outer layers; that five masked-copper paths lie near the grids; that the worst pair is CE_DRV_J to ILIM_REL_A during qualification; and that no reorder makes every orthogonal pair benign. Its candidate mitigations are not taken | D-80 and its 2026-11-16 addendum, LAYOUT_DECISIONS item 31; design document J.2 item 76 (r9-28); `sim/permit/RESULTS.md` section 5.8 |
+| C108 = 470 pF at assembly against the brief T2 interruption hazard | see the J.2 item 77 row; the formal sim 4 re-run is done (sim 4 section 5.6a), and the T-D-04 bench step stays (**superseded 2026-11-15:** "accept the present values, keep the 470 pF option, run a formal sim 4 re-run and a T-D-04 bench step") | D-81, LAYOUT_DECISIONS item 32 |
+| EIB reference rule set | Closed 2026-11-16: the operator kept the phase B set (18 of 26 fitted references on top); the EIB is not exported again, and the iBOM check during assembly (D-78) is the control for the eight bottom-referenced parts (**Superseded 2026-11-16, D-95:** "the stricter phase B set is applied (18 of 26 fitted references on top)") | D-78, D-95, LAYOUT_DECISIONS item 28 |
+| CR W6 "GND" label 0.086 mm from a mask opening (**Superseded 2026-11-16, D-95:** "W6 "GND" label 0.086 mm from a mask opening") | Closed 2026-11-16: the operator accepted the label as it is; no vertical position meets both the 0.10 mm mask rule and the W2 courtyard rule, and the effect is cosmetic. The second half of item 29, whether the J1 post hides the W3 reference, stays open as TODO(verify: assembled board) (**Superseded 2026-11-16, D-95:** "no recommendation; passes DRC") | D-73, D-95, LAYOUT_DECISIONS item 29 |
+| CR removal: which end of W5 and W7 is desoldered | no recommendation; design-document A.3 (r9-25) and PM6 state both methods and leave the end open (**superseded 2026-11-15:** "design-document A.3 and PM6 need the procedure") | section 8.5 |
+
 ## 12. Where the detail lives
 
 Table 12.1 maps each topic to the authoritative file and section. Paths are relative to the repository root unless they
@@ -1229,7 +1464,7 @@ Table 12.1. Topic index.
 
 | Topic | File | Section |
 |---|---|---|
-| Operator rulings R1-R9, revision log r9-1 to r9-11 | `docs/charger_bq25798_wiring_design_2026-11-05.md` | 0.1, 0.3 |
+| Operator rulings R1-R9, revision log r9-1 to r9-28 (**superseded 2026-11-16:** "r9-1 to r9-26"; **superseded 2026-11-15:** "r9-1 to r9-11") | `docs/charger_bq25798_wiring_design_2026-11-05.md` | 0.1, 0.3 |
 | Assemblies, CHG pin map, leads, taps | Design document | A.1-A.4 |
 | EIB leads, grounding, CR outline and mating, copper and placement rules | Design document | A.5-A.8 |
 | Permit gate equations, truth table, comparators, logic, eFuse, EIB, reset states, pin-level netlist | Design document | B.1-B.4, B.6-B.8 |
@@ -1237,25 +1472,30 @@ Table 12.1. Topic index.
 | MB modifications, Teensy pins, IO CSV rows as applied | Design document | D.1-D.3 |
 | Teensy pin map (authoritative) | `references/Scale Car Teensy IO - IO - 2026-11-12.csv` | Not applicable |
 | Modes, single faults, FC windows, invariants and transitions | Design document | F.1-F.5 |
-| Register image, firmware requirements FR-01 to FR-49, MCU watchdog | Design document | G.1-G.3 |
+| Register image, firmware requirements FR-01 to FR-51 (**superseded 2026-11-15:** "FR-01 to FR-49"), MCU watchdog | Design document | G.1-G.3 |
 | Calculations | Design document; `round4/calc/r9_calc.py` with `r9_calc_out.txt` and `r9_calc_out.json` (r9 re-run, H.24, R9.H25, R9.H26); `round3/calc/r3_calc.py`, `round4/calc/r7_calc.py` (r8 record) | H |
 | Plug-on outline geometry checks | `cr/geometry_check.md`, from `gen/cr_geometry.py` | H.23 successor row; LAYOUT_DECISIONS D-51; D-60 for the holes; D-62 for the trimmed outline |
 | Tests (T-A to T-W) | Design document | I |
 | Accepted residuals and open items | Design document | J.1, J.2 |
 | Audit runs | Design document; run-002 record `docs/reviews/charger-design/run-002-2026-11-12.md` | L.8 (no longer certifying), L.9 (adjudicated; fixes applied in r9-12; verify pass clean) |
-| Layout decisions D-01 to D-62 | `LAYOUT_DECISIONS.md` | D-38 to D-53 for 2026-11-12; D-54 to D-62 for 2026-11-13; section 11 for open TODO(verify) items |
-| Current state, routing-round decisions with reversal paths, items for the operator | `MORNING_REVIEW_2026-11-13.md` | 1-3 |
-| Current state and next steps | `HANDOFF.md` | Status block (2026-11-13), section 3a |
+| Layout decisions D-01 to D-95 (**superseded 2026-11-16:** "D-01 to D-92"; **superseded 2026-11-15:** "D-01 to D-84"; **superseded 2026-11-14:** "D-01 to D-62") | `LAYOUT_DECISIONS.md` | Section 1 for the current status; D-38 to D-53 for 2026-11-12; D-54 to D-69 for 2026-11-13; D-70 to D-84 for 2026-11-14; D-85 to D-92 for phase C (2026-11-15); D-93 for 2026-11-15; D-94 and D-95 for 2026-11-16; section 2 for the in-place script order; section 11 for open TODO(verify) items |
+| Routing-round decisions with reversal paths (2026-11-13; state superseded by `LAYOUT_DECISIONS.md` section 1) | `MORNING_REVIEW_2026-11-13.md` | 2 |
+| Current state and next steps | `HANDOFF.md` | Status block (2026-11-15), section 4 (run order) (**superseded 2026-11-15:** "Status block (2026-11-14)") |
+| Review of 2026-11-14 (88 findings, VR-1 to VR-4) | `REVIEW_2026-11-14.md` | 2, 3, 4 |
+| Circuit simulations (hard short, chopper, comparators, permit logic, eFuse decay) | `sim/README.md`, `sim/<name>/RESULTS.md` | Overview; each RESULTS.md section 6 (sim 5: section 5) and its "Check and corrections" section |
+| 2026-11-14 change notes | `update_2026-11-14/notes_cr.md`, `notes_eib.md`, `notes_phaseB_*.md`, `notes_phaseC_*.md` (phase C, second review, per-finding status R2-*) | Not applicable |
+| Respin input | `RESPIN_HANDOFF_2026-11-13.md` | 3.0, 3.3 |
 | Routed CR checks and reference designators | `cr/constraint_check.md`, `cr/silk_refs.md` | Not applicable |
-| CR fab package | `fab/cr_2026-11-13/README.md` | 1, 2, 4 |
+| CR fab package | `fab/cr_2026-11-14/README.md` (**superseded 2026-11-15:** "once exported; until then `fab/cr_2026-11-13f/README.md`"; **superseded 2026-11-14:** "`fab/cr_2026-11-13/README.md`") | 1, 2, 4 |
 | Figures of the routed CR | `figures/cr_routed_2026-11-13/` | Not applicable |
-| Pre-round-2 state record | `DESIGN_STATE_2026-11-12.md` | Superseded where round 2 differs |
+| Pre-round-2 state record | `DESIGN_STATE_2026-11-12.md` | Superseded where round 2 differs; current state in `LAYOUT_DECISIONS.md` section 1 |
 | First-round decision records | `decisions_2026-11-12/` | One file per decision |
 | Second-round decision records | `decisions_2026-11-12/round2/` | `orchestrator_digest.md` |
 | Outline change rationale | `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md` | 2, 3, 8 |
-| Ordering BOM | `bom_2026-11-11/ordering_bom.csv`, `README.md` | 8.2-8.3 for r9 changes |
+| Ordering BOM | `bom_2026-11-14/` with its `README.md` (**superseded 2026-11-14:** "`bom_2026-11-11/ordering_bom.csv`, `README.md`") | 3, 4, 5, 7 |
 | CR netlist and generator | `cr/cr.net`, `gen/netlist.py` | Not applicable |
-| EIB fab package | `fab/eib_2026-11-13/README.md` | 1, 5, 6 |
+| EIB fab package | `fab/eib_2026-11-14/README.md` (**superseded 2026-11-15:** "once exported; until then `fab/eib_2026-11-13c/README.md`"; **superseded 2026-11-14:** "`fab/eib_2026-11-13/README.md`") | 1, 5, 6 |
+| Superseded fab packages (do not upload) | `fab/cr_2026-11-13/` to `fab/cr_2026-11-13f/`, `fab/cr_2026-11-13b_oshpark/`, `fab/eib_2026-11-11/`, `fab/eib_2026-11-13/` to `fab/eib_2026-11-13c/` | Sections 9.3 and 9.4 |
 | Stale r7-outline work | `archive_r7_outline/` | Reference only |
 
 Table 12.1 points to the design document for every technical value in this README. The other files hold decision

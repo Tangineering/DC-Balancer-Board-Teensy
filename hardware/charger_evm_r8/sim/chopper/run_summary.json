@@ -1,0 +1,18 @@
+{
+ "ngspice": "** ngspice-46",
+ "runs": 4284,
+ "failed": 0,
+ "runs_by_part": {
+  "B": 1026,
+  "C": 144,
+  "C-noreq": 24,
+  "D": 252,
+  "D-noRTovp": 10,
+  "E": 1960,
+  "E-latch": 128,
+  "E-noreq": 128,
+  "EP": 420,
+  "F": 192
+ },
+ "wall_s": 2558
+}

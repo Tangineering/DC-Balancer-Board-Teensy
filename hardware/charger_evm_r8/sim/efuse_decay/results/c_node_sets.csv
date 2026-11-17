@@ -1,0 +1,8 @@
+node_set,V_on_V,R_sink_ohm,static_ratio_15p93V,smallsignal_gain_15p93V
+"as-built, gain fit 0.48 R 8.19k",1.2710,8190,0.8480,0.4800
+"as-built, dip fit V_on 1.19 V R 9.2k",1.1900,9200,0.8344,0.5091
+"as-built, dip fit V_on 1.25 V R 9.5k",1.2500,9500,0.8532,0.5171
+"as-built, gain fit R 13k",1.1230,13000,0.8480,0.5944
+"as-built, gain fit R 17k",0.9999,17000,0.8480,0.6571
+"as-built, open-cathode est. R 3.5k (ASSUMPTION)",1.4153,3500,0.8480,0.2829
+"repaired, healthy TL431 REF 4 uA",-,-,0.9802,1.0000

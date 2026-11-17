@@ -1,0 +1,27 @@
+* BAV199 (Nexperia BAV199,215) series double diode: behavioural model built 2026-11-14.
+* The Nexperia SPICE model and data sheet could not be fetched (assets.nexperia.com returned HTTP 403 on 2026-11-14),
+* and no BAV199 data sheet is in references/Datasheets. The diode is therefore a plain junction model whose
+* parameters are ASSUMPTIONS for a low-leakage switching diode (no junction or diffusion capacitance: the decks are
+* quasi-static, and the board input filters C106-C108 dominate any dynamics): VF about 0.80 V at 1 mA (IS 4 pA, N 1.6), reverse
+* leakage in the pA class at 25 C (the part is sold as a low-leakage diode; one search result quotes 3 pA typical and
+* 5 nA maximum at 70-75 V), breakdown 75 V. The model matters only when a comparator input is driven above the 3V3
+* rail (the over-range cases); the trip-point decks do not depend on it beyond the pA-class leakage. Subcircuits
+* BAV199_LO (IS 40 pA: VF about 0.70 V at 1 mA) and BAV199_HI (IS 0.4 pA: VF about 0.90 V at 1 mA) bracket VF.
+* Pin order (B.8, gen/netlist.py bav199()): 1 = anode of the lower diode (GND), 2 = cathode of the upper diode (3V3),
+* 3 = common node.
+.model DBAV199    D(IS=4e-12  N=1.6 RS=1.0 BV=75 IBV=5e-9)
+.model DBAV199_LO D(IS=4e-11  N=1.6 RS=1.0 BV=75 IBV=5e-9)
+.model DBAV199_HI D(IS=4e-13  N=1.6 RS=1.0 BV=75 IBV=5e-9)
+* lower diode: anode p1 (GND) -> cathode p3; upper diode: anode p3 -> cathode p2 (3V3)
+.subckt BAV199 p1 p2 p3
+Dlo p1 p3 DBAV199
+Dup p3 p2 DBAV199
+.ends BAV199
+.subckt BAV199_LO p1 p2 p3
+Dlo p1 p3 DBAV199_LO
+Dup p3 p2 DBAV199_LO
+.ends BAV199_LO
+.subckt BAV199_HI p1 p2 p3
+Dlo p1 p3 DBAV199_HI
+Dup p3 p2 DBAV199_HI
+.ends BAV199_HI

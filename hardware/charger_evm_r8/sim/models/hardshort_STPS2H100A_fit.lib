@@ -1,0 +1,5 @@
+* Behavioural Schottky model STPS2H100A_fit, built by sim/hardshort/run.py on 2026-11-15.
+* NOT a manufacturer model. Source table: ST DocID6115 Rev 8 Table 4 (max, 25 C), via cr_bom.csv D103 row; CJO ASSUMPTION.
+* Fit VF = N Vt ln(I/IS) + I RS at Tj = 25 C to the points (I A, VF V): [(2.0, 0.79), (4.0, 0.88)].
+* Validity: only inside the fitted current range; above it the series term is a linear extension.
+.MODEL D_STPS2H100A_fit D IS=1.4714e-12 N=1.0000 RS=0.03610 CJO=1.500e-10 M=0.45 VJ=0.4 BV=100 IBV=1e-4 TT=0

@@ -1,0 +1,72 @@
+{
+ "ngspice": "** ngspice-46",
+ "info": {
+  "lo5": [
+   21.58840220241842,
+   19.899040526911932
+  ],
+  "hi5": [
+   25.018929271813406,
+   22.927477217018886
+  ],
+  "old_lo": 21.90022143248532,
+  "sh_ov": 0.291168,
+  "sh_uv": 0.27040000000000003,
+  "check": 4.764901888165696e-05
+ },
+ "runs_G": 208,
+ "failed_G": 0,
+ "runs_body": 1304,
+ "failed_body": 0,
+ "body_compare": {
+  "B-body": {
+   "runs": 360,
+   "trips_changed": 0,
+   "cuts_changed": 0,
+   "latch_changed": 0,
+   "max_abs_dvmot_peak": 0.0048306649641745025,
+   "max_abs_de_charger": 4.853798873405424e-05,
+   "max_abs_dovp_off": 0.00025417430347834946,
+   "max_body_peak_A": 6.199671469175883e-05,
+   "max_body_charge_C": 8.711447778135573e-09,
+   "max_vout_minus_vin": 0.01612328608955771
+  },
+  "D-body": {
+   "runs": 56,
+   "trips_changed": 0,
+   "cuts_changed": 0,
+   "latch_changed": 0,
+   "max_abs_dvmot_peak": 0.00041417239791030624,
+   "max_abs_de_charger": 4.5288753140582116e-05,
+   "max_abs_dovp_off": 5.223080531263635e-05,
+   "max_body_peak_A": 1.381666208999377e-06,
+   "max_body_charge_C": 8.620252972261701e-10,
+   "max_vout_minus_vin": 0.006758331719611377
+  },
+  "E-body": {
+   "runs": 840,
+   "trips_changed": 0,
+   "cuts_changed": 0,
+   "latch_changed": 0,
+   "max_abs_dvmot_peak": 0.011907259004573234,
+   "max_abs_de_charger": 8.503477344445898e-05,
+   "max_abs_dovp_off": 0.0007852948680984184,
+   "max_body_peak_A": 6.05873466383855e-05,
+   "max_body_charge_C": 1.7497119954731333e-08,
+   "max_vout_minus_vin": 0.01078834810124718
+  },
+  "E-latch-body": {
+   "runs": 48,
+   "trips_changed": 0,
+   "cuts_changed": 0,
+   "latch_changed": 0,
+   "max_abs_dvmot_peak": 0.0067676601133115355,
+   "max_abs_de_charger": 2.7453170694968776e-05,
+   "max_abs_dovp_off": 5.000000000032756e-06,
+   "max_body_peak_A": 1.1905835890502203e-06,
+   "max_body_charge_C": 2.3970277417998465e-10,
+   "max_vout_minus_vin": -2.572520025267977e-05
+  }
+ },
+ "wall_s": 1068
+}

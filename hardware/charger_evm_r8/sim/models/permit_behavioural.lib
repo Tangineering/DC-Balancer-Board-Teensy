@@ -1,0 +1,206 @@
+* permit_behavioural.lib - behavioural ngspice models for the CR/EIB permit-logic simulation (sim/permit/).
+* Built 2026-11-14 from datasheet tables; NOT manufacturer models. No vendor SPICE model was used:
+*  - SN74LVC gates: TI SCES201N (SN74LVC2G32, rev. Sept 2015), sec. 6.3 Recommended Operating Conditions
+*    (VCC 1.65-5.5 V operating, 1.5 V data retention; VIH 0.65 VCC / 1.7 V / 2.0 V and VIL 0.35 VCC / 0.7 V / 0.8 V
+*    for VCC 1.65-1.95 / 2.3-2.7 / 3.0-3.6 V), sec. 6.5 (VOH 1.2 V at -4 mA, VCC 1.65 V; 1.9 V at -8 mA, 2.3 V;
+*    2.4 V at -16 mA and 2.3 V at -24 mA, 3 V; VOL 0.45 V at 4 mA 1.65 V, 0.3 V at 8 mA 2.3 V, 0.4 V at 16 mA and
+*    0.55 V at 24 mA 3 V; Ioff +-10 uA at VCC = 0; II +-5 uA), sec. 6.6 (tpd 1-3.8 ns at 3.3 V).
+*    The same ROC/EC rows are assumed for SN74LVC3G04 (SCES363L), SN74LVC2G08 (SCES198N), SN74LVC1G11 (SCES487I),
+*    SN74LVC3G06 (SCES364J) and SN74LVC1G06 (SCES295AB); those sheets were not re-read for this model (ASSUMPTION).
+*  - TLV3012B: TI SBOS300C (rev. April 2023): 6.6 (B-version supply 1.65-5.5 V), 6.9 (VOS +-6 mV 25 C, +-9 mV over
+*    temperature; VHYS 2-8 mV; VCM (V-)-0.2 to (V+)+0.2 V; VOH/VOL 200 mV max at 5 mA, VS 5 V; REF 1.223-1.260 V,
+*    0.5 mA; IQ 3.6 uA max), 6.10 (tPD 2 us typ / 4 us max; tr/tf 10 ns; tON power-on time 1.9 ms typ),
+*    9.4.4 (fail-safe inputs, no upper clamp; IN+ above range -> HIGH, IN- above range -> LOW, both -> indeterminate),
+*    9.4.5 (POR: push-pull output LOW while V+ is below the minimum supply and for up to 1.9 ms after it is crossed;
+*    Fig. 9-1 marks +1.5 V).
+*  - 2N7002K / BSS84: level-1 MOSFETs; VTO is a parameter swept over 1.0-2.5 V (2N7002K, onsemi) and 0.8-2.0 V
+*    (BSS84, onsemi BSS84LT1/D Rev 14 as quoted in REVIEW_2026-11-14.md section 5); KP chosen for RDS(on) of a few ohm.
+*  - BAV199: generic low-leakage diode (ASSUMPTION: IS 1 nA, N 1.9, i.e. VF 0.68 V at 1 mA).
+* Model behaviour BELOW the specified supply minimum (LVC < 1.65 V, TLV3012B < 1.65 V) is an extrapolation:
+*  - an output stage conducts only while VCC exceeds the 'va' parameter (ASSUMPTION, default 0.8 V, swept 0.6-1.0 V);
+*    below it the output is high impedance (this also reproduces Ioff at VCC = 0);
+*  - the input thresholds keep the 0.35/0.65 x VCC ratios below 1.65 V.
+* Parameters common to the gate models: f = threshold position inside the [VIL, VIH] band (0 = switches at VIL,
+* 1 = switches at VIH, 0.5 = mid-band); va = output-stage alive voltage; rs = scale on the output resistance.
+
+.func lvc_vil(v) {v<1.95 ? 0.35*v : (v<2.3 ? 0.6825+(v-1.95)*0.05 : (v<2.7 ? 0.7 : (v<3.0 ? 0.7+(v-2.7)/3.0 : 0.8)))}
+.func lvc_vih(v) {v<1.95 ? 0.65*v : (v<2.3 ? 1.2675+(v-1.95)*1.2357 : (v<2.7 ? 1.7 : (v<3.0 ? 1.7+(v-2.7) : 2.0)))}
+.func lvc_th(v,f) {lvc_vil(v)+f*(lvc_vih(v)-lvc_vil(v))}
+.func lgc(x,th) {0.5*(1+tanh((x-th)/0.01))}
+.func alivef(v,va) {0.5*(1+tanh((v-va)/0.05))}
+* output resistance vs VCC from the VOH/VOL rows (worst of source and sink): 112 ohm at 1.65 V, 50 ohm at 2.3 V,
+* 37.5 ohm at 3.0 V; below 1.65 V grows as 1/V^2 (ASSUMPTION)
+.func lvc_ro(v) {v<1.65 ? 112*(1.65/max(v,0.3))*(1.65/max(v,0.3)) : (v<2.3 ? 112-(v-1.65)*95.38 : (v<3.0 ? 50-(v-2.3)*17.86 : 37.5))}
+
+* ---------------- push-pull output stage (shared by every LVC push-pull gate) ----------------
+* yl = internal logic level 0..1 (after the 3 ns lag); the PMOS conducts from vcc, the NMOS to gnd
+.subckt lvc_pp yl y vcc gnd params: va=0.8 rs=1
+Bp vcc y I = alivef(V(vcc,gnd),va)*V(yl,gnd)*V(vcc,y)/(rs*lvc_ro(V(vcc,gnd)))
+Bn y gnd I = alivef(V(vcc,gnd),va)*(1-V(yl,gnd))*V(y,gnd)/(rs*lvc_ro(V(vcc,gnd)))
+Cy y gnd 3p
+.ends lvc_pp
+
+* open-drain sink stage (SN74LVC3G06/1G06): conducts when yl = 0 (output LOW); no PMOS, no path to VCC
+.subckt lvc_od yl y vcc gnd params: va=0.8 rs=1
+Bn y gnd I = alivef(V(vcc,gnd),va)*(1-V(yl,gnd))*V(y,gnd)/(rs*lvc_ro(V(vcc,gnd)))
+Cy y gnd 3p
+.ends lvc_od
+
+.model DIN D(IS=1e-14 N=1 CJO=0)
+
+* ---------------- gate sections ----------------
+.subckt lvc_inv a y vcc gnd params: f=0.5 va=0.8 rs=1
+Ca a gnd 5p
+Da gnd a DIN
+Bt yt gnd V = 1-lgc(V(a,gnd),lvc_th(V(vcc,gnd),f))
+Rl yt yl 1k
+Cl yl gnd 3p
+X1 yl y vcc gnd lvc_pp va={va} rs={rs}
+.ends lvc_inv
+
+.subckt lvc_or2 a b y vcc gnd params: f=0.5 va=0.8 rs=1
+Ca a gnd 5p
+Cb b gnd 5p
+Da gnd a DIN
+Db gnd b DIN
+Bt yt gnd V = lgc(V(a,gnd),lvc_th(V(vcc,gnd),f)) + lgc(V(b,gnd),lvc_th(V(vcc,gnd),f)) - lgc(V(a,gnd),lvc_th(V(vcc,gnd),f))*lgc(V(b,gnd),lvc_th(V(vcc,gnd),f))
+Rl yt yl 1k
+Cl yl gnd 3p
+X1 yl y vcc gnd lvc_pp va={va} rs={rs}
+.ends lvc_or2
+
+.subckt lvc_and2 a b y vcc gnd params: f=0.5 va=0.8 rs=1
+Ca a gnd 5p
+Cb b gnd 5p
+Da gnd a DIN
+Db gnd b DIN
+Bt yt gnd V = lgc(V(a,gnd),lvc_th(V(vcc,gnd),f))*lgc(V(b,gnd),lvc_th(V(vcc,gnd),f))
+Rl yt yl 1k
+Cl yl gnd 3p
+X1 yl y vcc gnd lvc_pp va={va} rs={rs}
+.ends lvc_and2
+
+.subckt lvc_and3 a b c y vcc gnd params: f=0.5 va=0.8 rs=1
+Ca a gnd 5p
+Cb b gnd 5p
+Cc c gnd 5p
+Da gnd a DIN
+Db gnd b DIN
+Dc gnd c DIN
+Bt yt gnd V = lgc(V(a,gnd),lvc_th(V(vcc,gnd),f))*lgc(V(b,gnd),lvc_th(V(vcc,gnd),f))*lgc(V(c,gnd),lvc_th(V(vcc,gnd),f))
+Rl yt yl 1k
+Cl yl gnd 3p
+X1 yl y vcc gnd lvc_pp va={va} rs={rs}
+.ends lvc_and3
+
+.subckt lvc_inv_od a y vcc gnd params: f=0.5 va=0.8 rs=1
+Ca a gnd 5p
+Da gnd a DIN
+Bt yt gnd V = 1-lgc(V(a,gnd),lvc_th(V(vcc,gnd),f))
+Rl yt yl 1k
+Cl yl gnd 3p
+X1 yl y vcc gnd lvc_od va={va} rs={rs}
+.ends lvc_inv_od
+
+* ---------------- TLV3012B (DBV pin order: 1 OUT, 2 V-, 3 IN+, 4 IN-, 5 REF, 6 V+) ----------------
+* vos: input offset (added to IN+); vhys: internal hysteresis; vref: REF value; vpor: POR supply threshold;
+* tpor: POR hold after vpor is crossed (0 < tpor <= 1.9 ms); tpd: propagation delay; tref: REF start-up time
+* constant (ASSUMPTION; the datasheet states only that the POR delay lets REF settle into <= 10 nF);
+* refhd: REF headroom below V+ (ASSUMPTION 0.2 V).
+.subckt tlv3012b out vm inp inm ref vp params: vos=0 vhys=6m vref=1.242 vpor=1.65 tpor=1.9m tpd=2u va=0.8 tref=1u refhd=0.2
+Dp vm inp DIN
+Dm vm inm DIN
+Cp inp vm 2p
+Cm inm vm 2p
+* reference
+Bri ri vm V = min(vref, max(V(vp,vm)-refhd, 0))
+Rr1 ri rf 1k
+Crf rf vm {tref/1k}
+Brb rb vm V = V(rf,vm)
+Rrb rb ref 2
+* power-on reset timer: x charges to ~1.1 over tpor while V+ > vpor, discharges in ~1 us when V+ < vpor
+Bpt vm x I = 0.5*(1+tanh((V(vp,vm)-vpor)/0.005))*1u/{tpor}*0.5*(1-tanh((V(x,vm)-1.1)/0.01)) - (1-0.5*(1+tanh((V(vp,vm)-vpor)/0.005)))*V(x,vm)
+Cx x vm 1u
+Bpo pok vm V = 0.5*(1+tanh((V(x,vm)-1)/0.01))*0.5*(1+tanh((V(vp,vm)-vpor)/0.005))
+* decision with internal hysteresis; common-mode overrides of sec. 9.4.4
+Bd dt vm V = V(pok,vm) * ( (V(inp,vm) > V(vp,vm)+0.2 && V(inm,vm) <= V(vp,vm)+0.2) ? 1 : ( (V(inm,vm) > V(vp,vm)+0.2 && V(inp,vm) <= V(vp,vm)+0.2) ? 0 : 0.5*(1+tanh((V(inp,vm)-V(inm,vm)+vos-vhys/2*(1-2*V(yl,vm)))/0.3m)) ) )
+Rl dt yl 1k
+Cl yl vm {tpd/1k/0.693}
+Bp vp out I = alivef(V(vp,vm),va)*V(yl,vm)*V(vp,out)/(40*lvc_ro(V(vp,vm))/37.5)
+Bn out vm I = alivef(V(vp,vm),va)*(1-V(yl,vm))*V(out,vm)/(40*lvc_ro(V(vp,vm))/37.5)
+Co out vm 3p
+* output ESD clamps (abs max (V+)+0.5 V for the push-pull output, SBOS300C 6.2)
+Do1 out vp DIN
+Do2 vm out DIN
+Biq vp vm I = 3.6u*alivef(V(vp,vm),va)
+.ends tlv3012b
+
+* ---------------- TLV3012B with an overdrive-dependent propagation delay (added 2026-11-15) ----------------
+* Same pins, POR, REF, common-mode overrides and output stage as tlv3012b. The decision is a charge-integrating
+* state s in [-1, +1]: ds/dt = Vd / k while s is inside its clamp, and the output reads s > 0. A step overdrive VOD
+* therefore takes k / VOD to flip the state, and a ramp of slew S takes sqrt(2 k / S); a fixed RC lag t0 follows.
+* Fit to SBOS300C Figures 8-12 (tPHL) and 8-13 (tPLH), VS 3.3 V, 25 C, values read from the plotted curves:
+*   tPHL 8 / 5 / 2.4 / 1.3 / 1.1 us at VOD 5 / 10 / 30 / 100 / 500 mV -> t0 1.05 us, k_hl 34.8 us*mV (1.40 us at 100 mV)
+*   tPLH 6 / 4.3 / 2.0 / 1.25 / 0.9 us at VOD 5 / 10 / 30 / 100 / 500 mV -> t0 0.90 us, k_lh 25.5 us*mV (1.16 us at 100 mV)
+* tpd100 = the delay at VOD 100 mV; t0 and k are scaled together by tpd100 / 1.40 us (H->L) and tpd100 / 1.16 us
+* (L->H). tpd100 = 1.3 us reproduces the figures, 2 us the Table 6.10 typical value and 4 us the Table 6.10 maximum.
+* ASSUMPTION: the maximum scales the whole curve uniformly (SBOS300C gives a maximum only at VOD 100 mV) and the
+* charge-integrator form holds for ramped inputs (the datasheet characterises steps only). The RC lag uses the mean
+* of the two t0 values.
+.subckt tlv3012b_od out vm inp inm ref vp params: vos=0 vhys=6m vref=1.242 vpor=1.65 tpor=1.9m tpd100=2u va=0.8 tref=1u refhd=0.2
+Dp vm inp DIN
+Dm vm inm DIN
+Cp inp vm 2p
+Cm inm vm 2p
+Bri ri vm V = min(vref, max(V(vp,vm)-refhd, 0))
+Rr1 ri rf 1k
+Crf rf vm {tref/1k}
+Brb rb vm V = V(rf,vm)
+Rrb rb ref 2
+Bpt vm x I = 0.5*(1+tanh((V(vp,vm)-vpor)/0.005))*1u/{tpor}*0.5*(1-tanh((V(x,vm)-1.1)/0.01)) - (1-0.5*(1+tanh((V(vp,vm)-vpor)/0.005)))*V(x,vm)
+Cx x vm 1u
+Bpo pok vm V = 0.5*(1+tanh((V(x,vm)-1)/0.01))*0.5*(1+tanh((V(vp,vm)-vpor)/0.005))
+* effective differential input (V): the common-mode overrides of sec. 9.4.4 force +-1 V; otherwise IN+ - IN- + vos with
+* the internal hysteresis centred on the present output state
+Bvd vd vm V = (V(inp,vm) > V(vp,vm)+0.2 && V(inm,vm) <= V(vp,vm)+0.2) ? 1 : ( (V(inm,vm) > V(vp,vm)+0.2 && V(inp,vm) <= V(vp,vm)+0.2) ? -1 : V(inp,vm)-V(inm,vm)+vos-vhys/2*(1-2*V(yl,vm)) )
+* integrator: Cs 1 nF, I = 1 nF * Vd / k (k in V*s, scaled by tpd100), clamped at +-1
+Bs vm s I = V(vd,vm) > 0 ? V(vd,vm)/({tpd100/1.16u}*25.5)*0.5*(1-tanh((V(s,vm)-1)/0.005)) : V(vd,vm)/({tpd100/1.40u}*34.8)*0.5*(1+tanh((V(s,vm)+1)/0.005))
+Cs s vm 1n
+Rs s vm 1e9
+Bd dt vm V = V(pok,vm) * 0.5*(1+tanh(V(s,vm)/0.02))
+Rl dt yl 1k
+Cl yl vm {(1.05u*tpd100/1.40u+0.90u*tpd100/1.16u)/2/1k/0.693}
+Bp vp out I = alivef(V(vp,vm),va)*V(yl,vm)*V(vp,out)/(40*lvc_ro(V(vp,vm))/37.5)
+Bn out vm I = alivef(V(vp,vm),va)*(1-V(yl,vm))*V(out,vm)/(40*lvc_ro(V(vp,vm))/37.5)
+Co out vm 3p
+Do1 out vp DIN
+Do2 vm out DIN
+Biq vp vm I = 3.6u*alivef(V(vp,vm),va)
+.ends tlv3012b_od
+
+* ---------------- discrete parts ----------------
+.model DBAV199 D(IS=1e-9 N=1.9 RS=1 CJO=1.5p BV=85 IBV=5n)
+.model DBODY D(IS=1e-12 N=1.2 RS=0.1 CJO=20p)
+* 2N7002K: VTO swept by the caller with vtn; BSS84: |VTO| swept with vtp
+.subckt nm2n7002 d g s params: vtn=1.6
+M1 d g s s NMX L=1u W=1u
+.model NMX NMOS(LEVEL=1 VTO={vtn} KP=0.2 LAMBDA=0.01)
+Cgs g s 30p
+Cgd g d 5p
+Db s d DBODY
+.ends nm2n7002
+.subckt pmbss84 d g s params: vtp=1.4
+M1 d g s s PMX L=1u W=1u
+.model PMX PMOS(LEVEL=1 VTO={-vtp} KP=0.03 LAMBDA=0.01)
+Cgs g s 25p
+Cgd g d 5p
+Db d s DBODY
+.ends pmbss84
+
+* ---------------- Teensy GPIO pad (ASSUMPTION: 25 ohm driver, no keeper unless ikeep > 0) ----------------
+* en = 1: driven to lvl*V(vt); en = 0: high impedance plus an optional keeper modelled as a constant current ikeep
+* toward the last driven level (sources toward vt if lvl = 1, sinks toward 0 if lvl = 0); worst-case keeper model
+.subckt tpad pad en lvl vt params: rd=25 ikeep=0
+Bd 0 pad I = V(en)*(V(lvl)*V(vt)-V(pad))/{rd} + (1-V(en))*{ikeep}*(V(lvl)*0.5*(1+tanh((V(vt)-V(pad)-0.05)/0.02)) - (1-V(lvl))*0.5*(1+tanh((V(pad)-0.05)/0.02)))
+Cp pad 0 7p
+.ends tpad

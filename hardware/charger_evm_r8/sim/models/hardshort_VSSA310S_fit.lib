@@ -1,0 +1,5 @@
+* Behavioural Schottky model VSSA310S_fit, built by sim/hardshort/run.py on 2026-11-15.
+* NOT a manufacturer model. Source table: Vishay doc 89405 Fig. 3 typ + 0.09 V to the Table max at 3 A.
+* Fit VF = N Vt ln(I/IS) + I RS at Tj = 25 C to the points (I A, VF V): [(1.0, 0.65), (3.0, 0.8), (10.0, 1.12)].
+* Validity: only inside the fitted current range; above it the series term is a linear extension.
+.MODEL D_VSSA310S_fit D IS=3.5004e-04 N=3.0209 RS=0.03236 CJO=3.000e-10 M=0.45 VJ=0.4 BV=100 IBV=1e-4 TT=0

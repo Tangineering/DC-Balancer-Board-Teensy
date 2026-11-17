@@ -1073,7 +1073,7 @@ z
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #1a1a1a" x="959.04" y="288.240688" transform="rotate(-0 959.04 288.240688)">R131A 100 ohm</text>
    </g>
    <g id="text_98">
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #1a1a1a" x="959.04" y="340.080688" transform="rotate(-0 959.04 340.080688)">R131B 100 ohm</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #1a1a1a" x="959.04" y="340.080688" transform="rotate(-0 959.04 340.080688)">R131B 4.99 kOhm</text>
    </g>
    <g id="text_99">
     <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1a1a1a" x="1009.584" y="300.105625" transform="rotate(-0 1009.584 300.105625)">J101.7  ILIM_REL_A</text>
@@ -1088,7 +1088,7 @@ z
     <text style="font-weight: 700; font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f5fad" x="732.24" y="435.795422" transform="rotate(-0 732.24 435.795422)">RFC_OFF</text>
    </g>
    <g id="text_103">
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #1a1a1a" x="959.04" y="430.800688" transform="rotate(-0 959.04 430.800688)">R132 100 ohm</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #1a1a1a" x="959.04" y="430.800688" transform="rotate(-0 959.04 430.800688)">R132 4.99 kOhm</text>
    </g>
    <g id="text_104">
     <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1a1a1a" x="1009.584" y="442.665625" transform="rotate(-0 1009.584 442.665625)">J101.10  RFC_OFF</text>
@@ -1115,7 +1115,7 @@ z
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #1a1a1a" transform="translate(829.44 52.685391)">RFC_OFF  = FCC_OFF OR (H1 AND UVB)</text>
    </g>
    <g id="text_111">
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #6b6b6b" x="6.48" y="727.554562" transform="rotate(-0 6.48 727.554562)">Small grey numbers are package pin numbers (B.8; U107 SOT-23 DBV pin numbers TODO(verify: SCES487I)). A bridge marks a crossing with no connection; a dot marks a junction. All logic VCC = 3V3 via T6.</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #6b6b6b" x="6.48" y="727.554562" transform="rotate(-0 6.48 727.554562)">Small grey numbers are package pin numbers (B.8; U107 SOT-23 DBV pin numbers per SCES487I Table 4-1). A bridge marks a crossing with no connection; a dot marks a junction. All logic VCC = 3V3 via T6.</text>
    </g>
   </g>
  </g>

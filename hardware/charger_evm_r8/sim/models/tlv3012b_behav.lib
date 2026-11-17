@@ -1,0 +1,51 @@
+* TLV3012B behavioural comparator model (push-pull output, internal hysteresis, fail-safe inputs, POR, 1.242 V REF)
+* Built 2026-11-14 for hardware/charger_evm_r8/sim/comparators from TI SBOS300C (REVISED APRIL 2023), because the
+* TI PSpice model (models/tlv3012_ti_sboc081a.lib, SBOC081A) is for the non-B TLV3012 (SBOS300B): it has no
+* hysteresis (V_VHYST 0), a fixed 0.5 mV offset, and drives its output to mid-supply whenever an input leaves the
+* common-mode range, which does not represent the TLV3012B fail-safe input rules of SBOS300C section 9.4.4.
+*
+* Datasheet source: TI SBOS300C (FEBRUARY 2004, REVISED APRIL 2023), https://www.ti.com/lit/ds/symlink/tlv3012b.pdf,
+* retrieved 2026-11-15 (check round) to audit sections 6.9 and 9.4.4; the PDF is not in references/Datasheets.
+* The 6.9 table header is "VS = 1.8 V and 5.5 V, VCM = VS/2, TA = 25 C"; VOS is specified at VCM = (V-) and holds at
+* both supply extremes. KPS is referenced to 3.3 V (ASSUMPTION; the worst-case trip moves by at most 27 mV of V-MOT over
+* references 1.8-5.5 V, see comparators/csv/psrr_reference_sweep.csv).
+* Datasheet basis (SBOS300C):
+*   6.6  Recommended supply 1.65-5.5 V (B versions); input range (V-) - 0.2 V to (V+) + 0.2 V
+*   6.9  VOS +-6 mV (25 C, VCM = V-), +-9 mV (-40..125 C); dVOS/dT +-12 uV/C typ; PSRR 100 typ / 1000 max uV/V;
+*        VHYS 2 / 6 / 8 mV (-40..125 C); IB +-10 pA max; CMRR 54 dB min (VCM -0.2 V to V+ + 0.2 V, VS 5.5 V);
+*        VOL 160 / 200 mV and VOH 90 / 200 mV from rail at 5 mA (VS 5 V) -> output resistance 18-40 ohm modelled;
+*        REF 1.223 / 1.242 / 1.260 V, drift 40 typ / 100 max ppm/C, load regulation sourcing 0.36 / 1 mV/mA;
+*        IQ 2.4 typ / 3.1 max uA (25 C), 3.6 uA max (-40..125 C)
+*   6.10 tON (power-on time) 1.9 ms; tPD 2-4 us (not modelled: the decks of this simulation are quasi-static)
+*   9.4.4 fail-safe inputs: both inputs in range -> normal comparison; IN- above range with IN+ in range -> output LOW;
+*        IN+ above range with IN- in range -> output HIGH; both above range -> indeterminate (parameter INDET selects
+*        the state so that both outcomes can be simulated). Inputs not clamped to V+; fail-safe to 5.5 V; abs max 7 V.
+*   9.4.5 POR: push-pull output LOW while V+ is below the minimum supply (the 1.9 ms delay is not modelled).
+* ASSUMPTION: an input below (V-) - 0.2 V is compared normally (the datasheet lists no outcome for it); it does not
+* occur in the simulated cases.
+*
+* Parameters: VOS (V, input-referred offset at VCM = V-, includes temperature), HYS (V, internal hysteresis),
+*   KCM (V/V, offset change per volt of common mode; |KCM| <= 10^(-54/20) = 2.0 mV/V), KPS (V/V, offset change per volt
+*   of supply away from 3.3 V; |KPS| <= 1 mV/V), VREF (V, REF output at the simulated temperature), RREF (ohm, REF
+*   source resistance = load regulation), ROUT (ohm), IQ (A), INDET (0 or 1).
+* Pin order follows the TI model: IN+ IN- V+ V- OUT REF.
+.subckt TLV3012B inp inm vp vn out ref params: VOS=0 HYS=6m KCM=0 KPS=0 VREF=1.242 RREF=1 ROUT=30 IQ=3u INDET=0
+* supply current
+Iq vp vn {IQ}
+* reference output
+Vr refi vn {VREF}
+Rr refi ref {RREF}
+* the current the REF pin sources is drawn from V+ (it returns to V- through Vr otherwise)
+Fref vp vn Vr -1
+* range flags (1 = input above the specified range)
+Bphi phi 0 V = (V(inp) > V(vp) + 0.2) ? 1 : 0
+Bmhi mhi 0 V = (V(inm) > V(vp) + 0.2) ? 1 : 0
+* effective differential input; hysteresis about the offset-corrected threshold
+Bvd vd 0 V = V(inp) - V(inm) - {VOS} - {KCM}*(0.5*(V(inp)+V(inm)) - V(vn)) - {KPS}*(V(vp) - V(vn) - 3.3)
+Bst stn 0 V = (V(vp) - V(vn) < 1.65) ? 0 : ((V(phi) > 0.5 && V(mhi) > 0.5) ? {INDET} : ((V(phi) > 0.5) ? 1 : ((V(mhi) > 0.5) ? 0 : ((V(vd) > ((V(st) > 0.5) ? -0.5*{HYS} : 0.5*{HYS})) ? 1 : 0))))
+Rst stn st 1
+Cst st 0 10p
+* push-pull output: V+ or V- through ROUT
+Bo outi 0 V = (V(st) > 0.5) ? V(vp) : V(vn)
+Ro outi out {ROUT}
+.ends TLV3012B

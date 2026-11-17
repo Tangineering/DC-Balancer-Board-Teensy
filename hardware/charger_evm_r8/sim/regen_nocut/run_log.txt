@@ -1,0 +1,49 @@
+Chargers (P_cap at VINDPM): {'lo': 18.8, 'nom': 21.7391, 'd310': 21.76, 'hi': 28.6578}
+Part A (railed brake, no cut):
+  ML0151 41.36   2.67->1.55 t=0.322 s Ppk=16.35 W Pmean=11.89 W Ipk19=0.860 A E=3.830 J E/KE=0.463 t>lo=0.00 ms exc_lo=0.0000 mJ
+  ML0157 47.30   3.00->1.90 t=0.312 s Ppk=18.95 W Pmean=14.58 W Ipk19=0.998 A E=4.544 J E/KE=0.482 t>lo=5.44 ms exc_lo=0.4233 mJ
+  ML0165 22.64   3.00->2.38 t=0.174 s Ppk=18.95 W Pmean=16.50 W Ipk19=0.998 A E=2.868 J E/KE=0.491 t>lo=5.44 ms exc_lo=0.4233 mJ
+  ML0165 28.55   2.49->1.43 t=0.307 s Ppk=14.93 W Pmean=10.71 W Ipk19=0.786 A E=3.287 J E/KE=0.452 t>lo=0.00 ms exc_lo=0.0000 mJ
+  ML0195 33.20   2.00->0.99 t=0.298 s Ppk=11.06 W Pmean=7.04 W Ipk19=0.582 A E=2.102 J E/KE=0.398 t>lo=0.00 ms exc_lo=0.0000 mJ
+  YP0166 21.97   3.00->1.53 t=0.420 s Ppk=18.95 W Pmean=13.09 W Ipk19=0.998 A E=5.497 J E/KE=0.472 t>lo=5.44 ms exc_lo=0.4233 mJ
+  YP0196 21.97   1.99->1.00 t=0.293 s Ppk=10.98 W Pmean=7.04 W Ipk19=0.578 A E=2.060 J E/KE=0.398 t>lo=0.00 ms exc_lo=0.0000 mJ
+  YP0198 21.98   1.98->1.00 t=0.290 s Ppk=10.90 W Pmean=7.00 W Ipk19=0.574 A E=2.029 J E/KE=0.397 t>lo=0.00 ms exc_lo=0.0000 mJ
+  step 2->1      2.00->1.00 t=0.295 s Ppk=11.06 W Pmean=7.08 W Ipk19=0.582 A E=2.092 J E/KE=0.399 t>lo=0.00 ms exc_lo=0.0000 mJ
+  step 3->1      3.00->1.00 t=0.578 s Ppk=18.95 W Pmean=10.94 W Ipk19=0.998 A E=6.327 J E/KE=0.452 t>lo=5.44 ms exc_lo=0.4233 mJ
+Part B thresholds (energy criterion, bisection 1 mm/s):
+  lo    Pcap 18.800 W VINDPM 19.38 V  v(P>cap) 2.9803 m/s  need(0.4mF leak) 18.091 mJ  first v0 {'0.4mF_leak': 3.109, '0.4mF_noleak': 3.126, '0.97mF_leak': 3.181, '0.97mF_noleak': 3.207, '0.4mF_leak_no_vesc_cap': 3.109}
+  nom   Pcap 21.739 W VINDPM 19.00 V  v(P>cap) 3.3525 m/s  need(0.4mF leak) 21.008 mJ  first v0 {'0.4mF_leak': 3.493, '0.4mF_noleak': 3.509, '0.97mF_leak': 3.571, '0.97mF_noleak': 3.595, '0.4mF_leak_no_vesc_cap': 3.493}
+  d310  Pcap 21.760 W VINDPM 19.00 V  v(P>cap) 3.3552 m/s  need(0.4mF leak) 21.008 mJ  first v0 {'0.4mF_leak': 3.496, '0.4mF_noleak': 3.511, '0.97mF_leak': 3.574, '0.97mF_noleak': 3.598, '0.4mF_leak_no_vesc_cap': 3.496}
+  hi    Pcap 28.658 W VINDPM 18.62 V  v(P>cap) 4.2287 m/s  need(0.4mF leak) 23.867 mJ  first v0 {'0.4mF_leak': None, '0.4mF_noleak': None, '0.97mF_leak': None, '0.97mF_noleak': None, '0.4mF_leak_no_vesc_cap': 4.381}
+Part C drive cycles (ideal tracking, 1 ms grid):
+  RegenTest_decel_sweep.csv    vmax 3.50 Ppk 17.710 W at t=160.1 v=3.498 I=8.80 A E=35.130 J exc_lo 0.000 mJ | eta1: Ppk 20.577 W exc lo/nom 100.081/0.000 mJ | decels from >3 m/s: 4
+  RegenTest_v2_lowspeed.csv    vmax 2.00 Ppk 11.045 W at t=130.9 v=1.998 I=12.00 A E=13.698 J exc_lo 0.000 mJ | eta1: Ppk 13.194 W exc lo/nom 0.000/0.000 mJ | decels from >3 m/s: 0
+  UDDS_trimmed_3.5mps.csv      vmax 3.50 Ppk 0.000 W at t=None v=None I=0.00 A E=0.000 J exc_lo 0.000 mJ | eta1: Ppk 0.000 W exc lo/nom 0.000/0.000 mJ | decels from >3 m/s: 0
+  UDDS_trimmed_to_idle.csv     vmax 5.00 Ppk 0.000 W at t=None v=None I=0.00 A E=0.000 J exc_lo 0.000 mJ | eta1: Ppk 0.000 W exc lo/nom 0.000/0.000 mJ | decels from >3 m/s: 0
+Part D efficiency sensitivity (0.4 mF, leak corner):
+  eg 0.80 ei 0.97 Ppk(3.0) 16.323 W E 3.875 J exc lo/nom/hi 0.000/0.000/0.000 mJ first v0 lo/nom/d310/hi 3.491/3.922/3.925/None
+  eg 0.90 ei 0.97 Ppk(3.0) 18.955 W E 4.544 J exc lo/nom/hi 0.423/0.000/0.000 mJ first v0 lo/nom/d310/hi 3.109/3.493/3.496/None
+  eg 1.00 ei 0.97 Ppk(3.0) 21.588 W E 5.213 J exc lo/nom/hi 123.102/0.000/0.000 mJ first v0 lo/nom/d310/hi 2.804/3.15/3.151/None
+  eg 1.00 ei 1.00 Ppk(3.0) 22.255 W E 5.374 J exc lo/nom/hi 183.623/4.080/0.000 mJ first v0 lo/nom/d310/hi 2.738/3.073/3.075/None
+Part E staged absorption (21.588 V):
+  eg 0.9 ei 0.97 0.4mF  full       Vmax(3.0) lo/nom/hi 19.527/19.099/18.721 V  first v0 lo/nom/d310/hi 3.107/3.49/3.493/None
+  eg 0.9 ei 0.97 0.4mF  400kHz     Vmax(3.0) lo/nom/hi 19.499/19.099/18.723 V  first v0 lo/nom/d310/hi 3.114/3.488/3.49/4.331
+  eg 0.9 ei 0.97 0.4mF  100kHz     Vmax(3.0) lo/nom/hi 20.626/20.599/20.599 V  first v0 lo/nom/d310/hi 3.069/3.416/3.418/3.725
+  eg 0.9 ei 0.97 0.4mF  100kHz_2ms Vmax(3.0) lo/nom/hi 21.370/21.350/21.350 V  first v0 lo/nom/d310/hi 3.026/3.135/3.135/3.135
+  eg 0.9 ei 0.97 0.97mF full       Vmax(3.0) lo/nom/hi 19.495/19.099/18.721 V  first v0 lo/nom/d310/hi 3.179/3.567/3.571/None
+  eg 0.9 ei 0.97 0.97mF 400kHz     Vmax(3.0) lo/nom/hi 19.481/19.099/18.721 V  first v0 lo/nom/d310/hi 3.188/3.574/3.577/None
+  eg 0.9 ei 0.97 0.97mF 100kHz     Vmax(3.0) lo/nom/hi 19.484/19.160/19.160 V  first v0 lo/nom/d310/hi 3.184/3.555/3.559/4.417
+  eg 0.9 ei 0.97 0.97mF 100kHz_2ms Vmax(3.0) lo/nom/hi 19.519/19.510/19.510 V  first v0 lo/nom/d310/hi 3.177/3.537/3.539/4.383
+  eg 1.0 ei 1.00 0.4mF  full       Vmax(3.0) lo/nom/hi 36.003/19.630/18.739 V  first v0 lo/nom/d310/hi 2.736/3.07/3.073/None
+  eg 1.0 ei 1.00 0.4mF  400kHz     Vmax(3.0) lo/nom/hi 35.639/19.748/19.321 V  first v0 lo/nom/d310/hi 2.742/3.068/3.07/3.803
+  eg 1.0 ei 1.00 0.4mF  100kHz     Vmax(3.0) lo/nom/hi 36.616/21.566/21.175 V  first v0 lo/nom/d310/hi 2.7/3.002/3.004/3.268
+  eg 1.0 ei 1.00 0.4mF  100kHz_2ms Vmax(3.0) lo/nom/hi 37.034/22.432/22.083 V  first v0 lo/nom/d310/hi 2.661/2.753/2.753/2.753
+  eg 1.0 ei 1.00 0.97mF full       Vmax(3.0) lo/nom/hi 27.508/19.323/18.739 V  first v0 lo/nom/d310/hi 2.802/3.142/3.145/None
+  eg 1.0 ei 1.00 0.97mF 400kHz     Vmax(3.0) lo/nom/hi 27.232/19.276/18.738 V  first v0 lo/nom/d310/hi 2.81/3.148/3.151/None
+  eg 1.0 ei 1.00 0.97mF 100kHz     Vmax(3.0) lo/nom/hi 27.320/19.598/19.422 V  first v0 lo/nom/d310/hi 2.808/3.131/3.134/3.882
+  eg 1.0 ei 1.00 0.97mF 100kHz_2ms Vmax(3.0) lo/nom/hi 27.541/20.011/19.850 V  first v0 lo/nom/d310/hi 2.801/3.113/3.115/3.85
+Part F 25 A 'T' ramp:
+  lo    v(P>cap) 2.3920 m/s first v0 2.51 P(3.0) 28.80 W P(2.5) 20.58 W
+  nom   v(P>cap) 2.5706 m/s first v0 2.699 P(3.0) 28.80 W P(2.5) 20.58 W
+  d310  v(P>cap) 2.5719 m/s first v0 2.7 P(3.0) 28.80 W P(2.5) 20.58 W
+  hi    v(P>cap) 2.9912 m/s first v0 None P(3.0) 28.80 W P(2.5) 20.58 W

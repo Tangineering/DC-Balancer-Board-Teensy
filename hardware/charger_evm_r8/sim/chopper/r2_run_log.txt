@@ -1,0 +1,73 @@
+=== Part 1: U101 OVP/UVLO corners under the sim 5 model ===
+  fitted, leak=False: UVLO_rise typ 9.859  band 9.444-10.158 V
+  fitted, leak=False: UVLO_fall typ 9.279  band 8.592-9.544 V
+  fitted, leak=False: OVP_rise  typ 23.188  band 22.149-24.457 V
+  fitted, leak=False: OVP_fall  typ 21.627  band 20.460-22.365 V
+  fitted, leak=True: UVLO_rise typ 9.859  band 9.055-10.548 V
+  fitted, leak=True: UVLO_fall typ 9.279  band 8.203-9.934 V
+  fitted, leak=True: OVP_rise  typ 23.188  band 21.588-25.019 V
+  fitted, leak=True: OVP_fall  typ 21.627  band 19.899-22.927 V
+  check against ../efuse_decay/results/a_bands_corners.csv: max difference 4.76e-05 V
+  old sim 2 'lo-leak' (OVP pin only, no resistor tolerance): rise 21.900 V; sim 5 corner rise/fall 21.588/19.899 V (lo), 25.019/22.927 V (hi)
+  OVP-threshold shift per 320 nA: OVP pin 0.2912 V, UVLO pin 0.2704 V
+=== Part 2: lever (a) divider candidates, leak-corner OVP rising minimum >= 23.100 V ===
+  gain scaling estimate: no-leak minimum 23.700 V, leak-corner maximum 26.771 V
+  E96 uvlo-kept: R102 845k R103 68.1k R104 47.5k -> OVP rise 23.256-26.863 V (no leak 23.818-26.300, typ 24.935); fall 21.439-24.614; UVLO rise 9.092-10.571 V
+  E96 uvlo-kept: R102 845k R103 69.8k R104 46.4k -> OVP rise 23.835-27.504 V (no leak 24.398-26.940, typ 25.542); fall 21.974-25.200; UVLO rise 9.052-10.521 V
+  E96 uvlo-kept: R102 845k R103 71.5k R104 44.2k -> OVP rise 25.036-28.831 V (no leak 25.599-28.266, typ 26.800); fall 23.083-26.413; UVLO rise 9.092-10.555 V
+  E96 free: R102 845k R103 61.9k R104 47.5k -> OVP rise 23.104-26.691 V (no leak 23.664-26.130, typ 24.774); fall 21.299-24.456; UVLO rise 9.558-11.085 V
+  E192 uvlo-kept: R102 845k R103 68.1k R104 47.5k -> OVP rise 23.256-26.863 V (no leak 23.818-26.300, typ 24.935); fall 21.439-24.614; UVLO rise 9.092-10.571 V
+  E192 uvlo-kept: R102 845k R103 69k R104 47.5k -> OVP rise 23.278-26.888 V (no leak 23.840-26.324, typ 24.959); fall 21.460-24.637; UVLO rise 9.028-10.501 V
+  E192 uvlo-kept: R102 845k R103 69k R104 47k -> OVP rise 23.519-27.154 V (no leak 24.081-26.590, typ 25.211); fall 21.682-24.880; UVLO rise 9.065-10.538 V
+  E192 free: R102 845k R103 40.7k R104 46.4k -> OVP rise 23.106-26.679 V (no leak 23.659-26.124, typ 24.769); fall 21.301-24.445; UVLO rise 11.785-13.537 V
+=== Part 3: string impedance against the leak-corner maximum (minimum >= 23.100 V) ===
+  scale 1.00: 835k/64.9k/47k -> OVP rise 23.173-26.756 V, UVLO rise 9.268-10.756 V, string 26.4 uA at 25 V
+  scale 0.75: 619k/48.7k/35.2k -> OVP rise 23.107-26.381 V, UVLO rise 9.270-10.554 V, string 35.6 uA at 25 V
+  scale 0.50: 432k/33.2k/24.6k -> OVP rise 23.163-26.180 V, UVLO rise 9.463-10.588 V, string 51.0 uA at 25 V
+  scale 0.25: 205k/16k/11.8k -> OVP rise 23.100-25.793 V, UVLO rise 9.453-10.362 V, string 107.4 uA at 25 V
+  scale 0.10: 84.5k/6.42k/4.87k -> OVP rise 23.110-25.636 V, UVLO rise 9.634-10.442 V, string 261.0 uA at 25 V
+  reference-only floor: minimum 23.100 V forces a maximum of 25.410 V (V_OVPR max/min = 1.1000); with 0.1 % resistors 25.512 V (upper bound of the resistor term)
+=== Part 4: transient runs with the sim 5 OVP corners (no VESC cut, nominal charger) ===
+  OVP c68.1k-47.5k-hi: rise 26.863 V, fall 24.614 V
+  OVP c68.1k-47.5k-lo: rise 23.256 V, fall 21.439 V
+  OVP c69.8k-46.4k-hi: rise 27.504 V, fall 25.200 V
+  OVP c69.8k-46.4k-lo: rise 23.835 V, fall 21.974 V
+  OVP s5-hi: rise 25.019 V, fall 22.927 V
+  OVP s5-lo: rise 21.588 V, fall 19.899 V
+  208 transient runs
+  G  H-hi  s5-hi                rise 25.019 nom : first trip 1.4-1.5 A, V-MOT peak max 83.38 V
+  G  H-hi  s5-lo                rise 21.588 nom : first trip 1.1-1.2 A, V-MOT peak max 83.38 V
+  G  H-hi  s5-lo                rise 21.588 none: first trip nan-0.25 A, V-MOT peak max 42.65 V
+  G  H-lo  s5-hi                rise 25.019 nom : first trip 1.5-1.6 A, V-MOT peak max 76.73 V
+  G  H-lo  s5-lo                rise 21.588 nom : first trip 1.5-1.6 A, V-MOT peak max 76.73 V
+  G  H-lo  s5-lo                rise 21.588 none: first trip 0.5-0.6 A, V-MOT peak max 39.25 V
+  G  H-typ s5-hi                rise 25.019 nom : first trip 1.5-1.6 A, V-MOT peak max 80.08 V
+  G  H-typ s5-lo                rise 21.588 nom : first trip 1.1-1.2 A, V-MOT peak max 80.08 V
+  G  H-typ s5-lo                rise 21.588 none: first trip nan-0.25 A, V-MOT peak max 40.96 V
+  GC H-hi  c68.1k-47.5k-hi      rise 26.863 nom : first trip 1.4-1.5 A, V-MOT peak max 83.38 V
+  GC H-hi  c68.1k-47.5k-lo      rise 23.256 nom : first trip 1.4-1.5 A, V-MOT peak max 83.38 V
+  GC H-hi  c69.8k-46.4k-hi      rise 27.504 nom : first trip 1.4-1.5 A, V-MOT peak max 83.38 V
+  GC H-hi  c69.8k-46.4k-lo      rise 23.835 nom : first trip 1.4-1.5 A, V-MOT peak max 83.38 V
+  GC H-lo  c68.1k-47.5k-hi      rise 26.863 nom : first trip 1.5-1.6 A, V-MOT peak max 76.73 V
+  GC H-lo  c68.1k-47.5k-lo      rise 23.256 nom : first trip 1.5-1.6 A, V-MOT peak max 76.73 V
+  GC H-lo  c69.8k-46.4k-hi      rise 27.504 nom : first trip 1.5-1.6 A, V-MOT peak max 76.73 V
+  GC H-lo  c69.8k-46.4k-lo      rise 23.835 nom : first trip 1.5-1.6 A, V-MOT peak max 76.73 V
+  GC H-typ c68.1k-47.5k-hi      rise 26.863 nom : first trip 1.5-1.6 A, V-MOT peak max 80.08 V
+  GC H-typ c68.1k-47.5k-lo      rise 23.256 nom : first trip 1.5-1.6 A, V-MOT peak max 80.08 V
+  GC H-typ c69.8k-46.4k-hi      rise 27.504 nom : first trip 1.5-1.6 A, V-MOT peak max 80.08 V
+  GC H-typ c69.8k-46.4k-lo      rise 23.835 nom : first trip 1.5-1.6 A, V-MOT peak max 80.08 V
+  GS H-hi  sw22.7               rise 22.700 nom : first trip 1.1-1.2 A, V-MOT peak max 63.02 V
+  GS H-hi  sw22.8               rise 22.800 nom : first trip 1.1-1.2 A, V-MOT peak max 63.02 V
+  GS H-hi  sw22.9               rise 22.900 nom : first trip 1.1-1.2 A, V-MOT peak max 63.02 V
+  GS H-hi  sw23.0               rise 23.000 nom : first trip 1.1-1.2 A, V-MOT peak max 63.02 V
+  GS H-hi  sw23.1               rise 23.100 nom : first trip 1.4-1.5 A, V-MOT peak max 63.02 V
+  GS H-hi  sw23.2               rise 23.200 nom : first trip 1.4-1.5 A, V-MOT peak max 63.02 V
+  GS H-hi  sw23.3               rise 23.300 nom : first trip 1.4-1.5 A, V-MOT peak max 63.02 V
+  GS H-hi  sw23.4               rise 23.400 nom : first trip 1.4-1.5 A, V-MOT peak max 63.02 V
+=== Part 5: U101 without reverse blocking (body diode, Vf 0.40 V at 1 mA) against the 2026-11-14 runs ===
+  1304 transient runs
+  B-body: {'runs': 360, 'trips_changed': 0, 'cuts_changed': 0, 'latch_changed': 0, 'max_abs_dvmot_peak': 0.0048306649641745025, 'max_abs_de_charger': 4.853798873405424e-05, 'max_abs_dovp_off': 0.00025417430347834946, 'max_body_peak_A': 6.199671469175883e-05, 'max_body_charge_C': 8.711447778135573e-09, 'max_vout_minus_vin': 0.01612328608955771}
+  D-body: {'runs': 56, 'trips_changed': 0, 'cuts_changed': 0, 'latch_changed': 0, 'max_abs_dvmot_peak': 0.00041417239791030624, 'max_abs_de_charger': 4.5288753140582116e-05, 'max_abs_dovp_off': 5.223080531263635e-05, 'max_body_peak_A': 1.381666208999377e-06, 'max_body_charge_C': 8.620252972261701e-10, 'max_vout_minus_vin': 0.006758331719611377}
+  E-body: {'runs': 840, 'trips_changed': 0, 'cuts_changed': 0, 'latch_changed': 0, 'max_abs_dvmot_peak': 0.011907259004573234, 'max_abs_de_charger': 8.503477344445898e-05, 'max_abs_dovp_off': 0.0007852948680984184, 'max_body_peak_A': 6.05873466383855e-05, 'max_body_charge_C': 1.7497119954731333e-08, 'max_vout_minus_vin': 0.01078834810124718}
+  E-latch-body: {'runs': 48, 'trips_changed': 0, 'cuts_changed': 0, 'latch_changed': 0, 'max_abs_dvmot_peak': 0.0067676601133115355, 'max_abs_de_charger': 2.7453170694968776e-05, 'max_abs_dovp_off': 5.000000000032756e-06, 'max_body_peak_A': 1.1905835890502203e-06, 'max_body_charge_C': 2.3970277417998465e-10, 'max_vout_minus_vin': -2.572520025267977e-05}
+Done: G 208 runs (0 failed), body 1304 runs (0 failed), 1068 s

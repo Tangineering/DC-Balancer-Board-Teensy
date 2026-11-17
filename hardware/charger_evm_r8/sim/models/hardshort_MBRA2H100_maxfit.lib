@@ -1,0 +1,5 @@
+* Behavioural Schottky model MBRA2H100_maxfit, built by sim/hardshort/run.py on 2026-11-15.
+* NOT a manufacturer model. Source table: onsemi MBRS2H100/D Rev.16 Fig. 2 (max, 25 C), read from the figure.
+* Fit VF = N Vt ln(I/IS) + I RS at Tj = 25 C to the points (I A, VF V): [(2.0, 0.79), (10.0, 0.98), (60.0, 1.55)].
+* Validity: only inside the fitted current range; above it the series term is a linear extension.
+.MODEL D_MBRA2H100_maxfit D IS=6.4428e-05 N=2.9071 RS=0.00872 CJO=5.830e-10 M=0.45 VJ=0.4 BV=100 IBV=1e-4 TT=0

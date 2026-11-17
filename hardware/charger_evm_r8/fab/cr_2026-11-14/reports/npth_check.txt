@@ -1,0 +1,25 @@
+J102       drill 1.020 mm  F.Cu   nearest copper 0.254 mm (zone /GND)  ok
+J102       drill 1.020 mm  F.Cu   nearest copper 0.254 mm (zone /GND)  ok
+MH1        drill 3.700 mm  F.Cu   nearest copper 2.131 mm (zone /GND)  ok
+MH4        drill 3.700 mm  F.Cu   nearest copper 2.131 mm (zone /GND)  ok
+MH2        drill 3.700 mm  F.Cu   nearest copper 2.131 mm (zone /GND)  ok
+MH3        drill 3.700 mm  F.Cu   nearest copper 2.131 mm (zone /GND)  ok
+J102       drill 1.020 mm  In1.Cu nearest copper 0.254 mm (zone /GND)  ok
+J102       drill 1.020 mm  In1.Cu nearest copper 0.254 mm (zone /GND)  ok
+MH1        drill 3.700 mm  In1.Cu nearest copper 2.131 mm (zone /GND)  ok
+MH4        drill 3.700 mm  In1.Cu nearest copper 2.131 mm (zone /GND)  ok
+MH2        drill 3.700 mm  In1.Cu nearest copper 2.131 mm (zone /GND)  ok
+MH3        drill 3.700 mm  In1.Cu nearest copper 2.131 mm (zone /GND)  ok
+J102       drill 1.020 mm  In2.Cu nearest copper 0.344 mm (track/via /GND)  ok
+J102       drill 1.020 mm  In2.Cu nearest copper 0.319 mm (track/via /GND)  ok
+MH1        drill 3.700 mm  In2.Cu nearest copper 2.199 mm (track/via /GND)  ok
+MH4        drill 3.700 mm  In2.Cu nearest copper 2.185 mm (track/via /GND)  ok
+MH2        drill 3.700 mm  In2.Cu nearest copper 2.192 mm (track/via /GND)  ok
+MH3        drill 3.700 mm  In2.Cu nearest copper 2.201 mm (track/via /GND)  ok
+J102       drill 1.020 mm  B.Cu   nearest copper 0.254 mm (zone /GND)  ok
+J102       drill 1.020 mm  B.Cu   nearest copper 0.254 mm (zone /GND)  ok
+MH1        drill 3.700 mm  B.Cu   nearest copper 2.131 mm (zone /GND)  ok
+MH4        drill 3.700 mm  B.Cu   nearest copper 2.131 mm (zone /GND)  ok
+MH2        drill 3.700 mm  B.Cu   nearest copper 2.131 mm (zone /GND)  ok
+MH3        drill 3.700 mm  B.Cu   nearest copper 2.131 mm (zone /GND)  ok
+NPTH holes: 6; result: pass

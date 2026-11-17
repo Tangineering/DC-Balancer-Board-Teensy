@@ -1,0 +1,9 @@
+state,I_evm_subset,t3_max_s,cases_over_5s,cases_over_6p5s,worst_case
+ON,all I_evm,12.865,60/864,36/864,V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40
+ON,I_evm >= floor,4.387,0/432,0/432,V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.55
+LATCHED_BD,all I_evm,12.957,134/1440,72/1440,V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40
+LATCHED_BD,I_evm >= floor,4.649,0/720,0/720,V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40
+OVP_START,all I_evm,12.872,42/432,24/432,V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40
+OVP_START,I_evm >= floor,4.413,0/216,0/216,V0 22.28 Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.70
+LATCHED_ISO,all I_evm,4.624,0/40,0/40,V0 22.28 Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan
+LATCHED_ISO,I_evm >= floor,4.624,0/40,0/40,V0 22.28 Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan

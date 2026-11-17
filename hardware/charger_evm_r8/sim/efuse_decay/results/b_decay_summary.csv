@@ -1,0 +1,27 @@
+state,V0_V,I_evm_subset,t12_min_s,t12_max_s,cases_over_0p5s,cases_over_1p5s,worst_case
+ON,12.50,all I_evm,0.005,0.265,0/216,0/216,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+ON,12.50,I_evm >= floor,0.005,0.074,0/108,0/108,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+ON,16.00,all I_evm,0.041,1.864,36/216,6/216,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+ON,16.00,I_evm >= floor,0.041,0.567,3/108,0/108,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+ON,19.38,all I_evm,0.075,3.106,69/216,18/216,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+ON,19.38,I_evm >= floor,0.075,1.010,12/108,0/108,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+ON,22.28,all I_evm,0.104,4.010,99/216,27/216,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+ON,22.28,I_evm >= floor,0.104,1.368,24/108,0/108,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,12.50,all I_evm,0.006,0.150,0/360,0/360,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,12.50,I_evm >= floor,0.006,0.094,0/180,0/180,Cin 28.4u Cevm 20.6u Ievm 0.391m IQ 0.000m Vf 0.55 OVPF nan
+LATCHED_BD,16.00,all I_evm,0.050,1.775,126/360,4/360,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,16.00,I_evm >= floor,0.050,0.663,36/180,0/180,Cin 28.4u Cevm 20.6u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,19.38,all I_evm,0.090,3.033,225/360,36/360,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,19.38,I_evm >= floor,0.090,1.105,96/180,0/180,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,22.28,all I_evm,0.124,3.947,258/360,69/360,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.40 OVPF nan
+LATCHED_BD,22.28,I_evm >= floor,0.124,1.452,114/180,0/180,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.40 OVPF nan
+OVP_START,22.28,all I_evm,0.104,4.021,198/432,54/432,Cin 28.4u Cevm 51.4u Ievm 0.000m IQ 0.000m Vf 0.70 OVPF 19.899
+OVP_START,22.28,I_evm >= floor,0.104,1.368,48/216,0/216,Cin 28.4u Cevm 51.4u Ievm 0.391m IQ 0.000m Vf 0.55 OVPF 19.899
+LATCHED_ISO,12.50,all I_evm,0.006,0.094,0/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,12.50,I_evm >= floor,0.006,0.094,0/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,16.00,all I_evm,0.050,0.663,2/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,16.00,I_evm >= floor,0.050,0.663,2/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,19.38,all I_evm,0.090,1.105,5/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,19.38,I_evm >= floor,0.090,1.105,5/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,22.28,all I_evm,0.124,1.427,6/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan
+LATCHED_ISO,22.28,I_evm >= floor,0.124,1.427,6/10,0/10,Cin 28.4u Cevm 0.0u Ievm 0.000m IQ 0.000m Vf nan OVPF nan

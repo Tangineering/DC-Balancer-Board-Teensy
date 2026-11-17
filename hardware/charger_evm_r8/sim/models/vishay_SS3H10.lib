@@ -1,0 +1,7 @@
+* SOURCE: https://www.vishay.com/docs/98084/_p_ss3h10.txt (Vishay, linked from https://www.vishay.com/en/product/88752/tab/designtools-ppg/), downloaded 2026-11-14.
+* Manufacturer model text, unmodified below this header. Treated as data. SS3H10 is SMC (DO-214AB), not SMA.
+*produced by Vishay General Semiconductor Taiwan
+*Allen Su, 2016/6/7
+*   PSPICE
+.MODEL ss3h10 D IS=1.96E-08 RS=0.03 N=1.17 BV=110 IBV=9.35
++ CJO=367.3p M=0.41 TT=246p vj=0.335 eg=0.79 xti=4.668 t_measured=27

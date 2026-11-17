@@ -1,0 +1,63 @@
+Quantity,Digi-Key Part Number,Manufacturer Part Number,Manufacturer,Description,Customer Reference,Reference Designators,BOM Quantity,"Unit Price (qty 1, 2026-11-13)"
+10,399-C0603C223K5RACTUCT-ND,C0603C223K5RACTU,KEMET,22 nF 50 V X7R 0603,CR C101,CR: C101,1,0.12
+3,1276-3095-1-ND,CL31B105KCHSFNE,Samsung Electro-Mechanics,1.0 uF 100 V X7R 1206 (1.80 mm max thickness),CR C102a,CR: C102a,1,0.41
+1,445-181657-1-ND,CNC6P1X7R2A475K250AE,TDK,"4.7 uF 100 V X7R 1210 (2.50 mm, Digi-Key description); effective >= 3 uF at 23.6 V required",CR C102b,CR: C102b,1,1.47
+17,490-3285-1-ND,GRM188R72A104KA35D,Murata Electronics,100 nF 100 V X7R 0603,"CR C102c,110,111,114-116,119,126,130-132","CR: C102c; CR: C110,C111,C114,C115,C116,C119,C126,C130,C131,C132",11,0.16
+10,490-3285-1-ND,GRM188R72A104KA35D,Murata Electronics,100 nF 100 V X7R 0603,"EIB C201,202,205","EIB: C201,C202,C205",3,0.16
+10,1276-CL21B105KBFNNNFCT-ND,CL21B105KBFNNNF,Samsung Electro-Mechanics,1.0 uF 50 V X7R 0805 (1.35 mm max thickness),CR C103,CR: C103,1,0.14
+10,490-1443-1-ND,GRM1885C1H471JA01D,Murata Electronics,470 pF 50 V C0G 0603,"CR C106,107","CR: C106,C107",2,0.12
+10,490-1451-1-ND,GRM1885C1H102JA01D,Murata Electronics,1.0 nF 50 V C0G 0603,"CR C108,129","CR: C108,C129",2,0.10
+3,1276-2872-1-ND,CL21B106KOQNNNE,Samsung Electro-Mechanics,10 uF 16 V X7R 0805 (1.40 mm max thickness),CR C125,CR: C125,1,0.27
+3,497-3758-1-ND,STPS2H100A,STMicroelectronics,"100 V, 2 A Schottky, SMA (DO-214AC); IFSM 75 A; IR <= 1 uA at 25 C / <= 1 mA at 125 C (VR = 100 V)",CR D103,CR: D103,1,0.57
+5,BAV199-FDICT-ND,BAV199-7-F,Diodes Incorporated,"BAV199 series pair, 85 V, 140 mA, IR <= 5 nA at 75 V, SOT-23",CR D104-106,"CR: D104,D105,D106",3,0.30
+3,SMAJ33ALFCT-ND,SMAJ33A,Littelfuse Inc.,"400 W TVS, VRWM 33 V, VBR 36.70-40.60 V at 1 mA, Vc 53.3 V at 7.5 A, IR <= 1 uA at VRWM",CR D107,CR: D107,1,0.47
+3,612-TSW-110-07-L-S-ND,TSW-110-07-L-S,Samtec,"TSW 1x10, 2.54 mm, 0.64 mm square post, -07 (post 5.84 mm into the SSQ socket, tail 2.54 mm through the CR), -L plating",CR J1,CR: J1,1,0.84
+1,612-TSW-112-07-L-S-ND,TSW-112-07-L-S,Samtec,"TSW 1x12, 2.54 mm, 0.64 mm square post, -07 (post 5.84 mm into the SSQ socket, tail 2.54 mm through the CR), -L plating",CR J1,CR: J1,1,1.10
+1,WM1793-ND,43045-1012,Molex,"Molex Micro-Fit 3.0 43045-1012, vertical header, 3.00 mm pitch, dual row, 10 circuits, PCB pegs, tin, 8.5 A per contact",CR J102,CR: J102,1,1.89
+10,P845KDACT-ND,ERA-6AEB8453V,Panasonic Industry,845 kOhm 0.1 % 25 ppm/K 0805 thin film,CR R102,CR: R102,1,0.10
+10,541-27.4KHCT-ND,CRCW060327K4FKEA,Vishay Dale,27.4 kOhm 1 % 100 ppm/K 0603 thick film,CR R105,CR: R105,1,0.10
+14,541-1.00KHCT-ND,CRCW06031K00FKEA,Vishay Dale,1.00 kOhm 1 % 100 ppm/K 0603 thick film,"CR R106s,122,126,147 EIB R250,251,253,266,275","CR: R106s,R122,R126,R147; EIB: R250,R251,R253,R266,R275",9,0.10
+10,541-10.0KHCT-ND,CRCW060310K0FKEA,Vishay Dale,10.0 kOhm 1 % 100 ppm/K 0603 thick film,"CR R107,129,185,186 EIB R274","CR: R107,R129,R185,R186; EIB: R274",5,0.10
+17,541-47.0KHCT-ND,CRCW060347K0FKEA,Vishay Dale,47.0 kOhm 1 % 100 ppm/K 0603 thick film,"R108,123,R252,254,267-271,EVM R272,EVM R272b","CR: R108,R123; EIB: R252,R254,R267,R268,R269,R270,R271; SYS: EVM R272,EVM R272b",11,0.03
+10,10-ERA-6AEB4873VCT-ND,ERA-6AEB4873V,Panasonic Industry,487 kOhm 0.1 % 25 ppm/K 0805 thin film,CR R109,CR: R109,1,0.10
+10,P56.2KDBCT-ND,ERA-3AEB5622V,Panasonic Industry,56.2 kOhm 0.1 % 25 ppm/K 0603 thin film,"CR R110,112","CR: R110,R112",2,0.11
+3,541-3794-1-ND,TNPW0805442KBEEA,Vishay Dale,442 kOhm 0.1 % 25 ppm/K 0805 thin film,CR R111,CR: R111,1,0.41
+10,541-6.49MHCT-ND,CRCW06036M49FKEA,Vishay Dale,6.49 MOhm 1 % 100 ppm/K 0603 thick film,CR R113,CR: R113,1,0.10
+3,541-2059-1-ND,TNPW08051M00BEEA,Vishay Dale,1.00 MOhm 0.1 % 25 ppm/K 0805 thin film,CR R114,CR: R114,1,0.41
+10,13-RT0603BRD07104KLCT-ND,RT0603BRD07104KL,YAGEO,104 kOhm 0.1 % 25 ppm/K 0603 thin film,CR R115,CR: R115,1,0.10
+10,541-10.0MHCT-ND,CRCW060310M0FKEA,Vishay Dale,10.0 MOhm 1 % 100 ppm/K 0603 thick film,CR R116,CR: R116,1,0.11
+10,541-100HCT-ND,CRCW0603100RFKEA,Vishay Dale,100 Ohm 1 % 100 ppm/K 0603 thick film,"CR R130,131A","CR: R130,R131A",2,0.10
+10,541-4.99KHCT-ND,CRCW06034K99FKEA,Vishay Dale,4.99 kOhm 1 % 100 ppm/K 0603 thick film,"CR R131B,132","CR: R131B,R132",2,0.10
+10,541-68.0FCT-ND,CRCW120668R0FKEA,Vishay Dale,"68.0 Ohm 1 % 100 ppm/K 1206 thick film, 0.25 W",CR R175,CR: R175,1,0.11
+10,541-200HCT-ND,CRCW0603200RFKEA,Vishay Dale,200 Ohm 1 % 100 ppm/K 0603 thick film,"CR R176,177","CR: R176,R177",2,0.10
+10,541-20.0KHCT-ND,CRCW060320K0FKEA,Vishay Dale,20.0 kOhm 1 % 100 ppm/K 0603 thick film,CR R184,CR: R184,1,0.10
+10,541-3.30MHCT-ND,CRCW06033M30FKEA,Vishay Dale,3.30 MOhm 1 % 100 ppm/K 0603 thick film,CR R187,CR: R187,1,0.10
+10,541-453KHCT-ND,CRCW0603453KFKEA,Vishay Dale,453 kOhm 1 % 100 ppm/K 0603 thick film,CR R188,CR: R188,1,0.10
+10,541-1.00MHCT-ND,CRCW06031M00FKEA,Vishay Dale,1.00 MOhm 1 % 100 ppm/K 0603 thick film,CR R189,CR: R189,1,0.10
+4,296-TLV3012BIDBVRCT-ND,TLV3012BIDBVR,Texas Instruments,"Comparator + ref, push-pull, SOT-23-6","CR U102,103,119,120","CR: U102,U103,U119,U120",4,2.78
+3,296-13278-1-ND,SN74LVC3G04DCTR,Texas Instruments,"SN74LVC3G04, SSOP-8 (DCT)",CR U105,CR: U105,1,0.99
+4,296-13267-1-ND,SN74LVC2G32DCTR,Texas Instruments,"SN74LVC2G32, SSOP-8 (DCT)","CR U106,110","CR: U106,U110",2,0.93
+3,296-16810-1-ND,SN74LVC1G11DBVR,Texas Instruments,"SN74LVC1G11, SOT-23-6 (DBV)",CR U107,CR: U107,1,0.36
+3,296-36980-1-ND,SN74LVC2G08IDCTRQ1,Texas Instruments,"SN74LVC2G08, SSOP-8 (DCT)",CR U118,CR: U118,1,0.77
+10,1727-4789-1-ND,"2N7002BK,215",Nexperia USA Inc.,"60 V N-MOSFET, SOT-23, Vgs(th) max 2.1 V","EIB Q201,202","EIB: Q201,Q202",2,0.19
+3,BSS84LT1GOSCT-ND,BSS84LT1G,onsemi,"50 V, 130 mA, SOT-23, |VGS(th)| <= 2.0 V required",EIB Q203,EIB: Q203,1,0.32
+10,541-48.7KHCT-ND,CRCW060348K7FKEA,Vishay Dale,48.7 kOhm 1 % 100 ppm/K 0603 thick film,EIB R255,EIB: R255,1,0.10
+10,541-59.0KHCT-ND,CRCW060359K0FKEA,Vishay Dale,59.0 kOhm 1 % 100 ppm/K 0603 thick film,EIB R257,EIB: R257,1,0.10
+10,541-10.0HCT-ND,CRCW060310R0FKEA,Vishay Dale,10.0 Ohm 1 % 100 ppm/K 0603 thick film,"EIB R273,276","EIB: R273,R276",2,0.10
+3,296-13280-1-ND,SN74LVC3G06DCTR,Texas Instruments,"SN74LVC3G06, SSOP-8 (DCT)",EIB U201,EIB: U201,1,1.00
+3,296-32290-1-ND,SN74LVC1G06DCKT,Texas Instruments,"SN74LVC1G06, SC70-5 (DCK)",EIB U202,EIB: U202,1,0.93
+10,P10KDACT-ND,ERA-6AEB103V,Panasonic Industry,10.0 kOhm 0.1 % 25 ppm/K 0805 thin film,"R170,R171 (MB joints)","SYS: R170,R171 (MB joints)",2,0.10
+10,541-0.0GCT-ND,CRCW06030000Z0EA,Vishay Dale,0 Ohm jumper 0603,EVM R21,SYS: EVM R21,1,0.10
+10,541-49.9KHCT-ND,CRCW060349K9FKEA,Vishay Dale,49.9 kOhm 1 % 100 ppm/K 0603 thick film,EVM R23,SYS: EVM R23,1,0.10
+10,541-200KHCT-ND,CRCW0603200KFKEA,Vishay Dale,200 kOhm 1 % 100 ppm/K 0603 thick film,EVM R256,SYS: EVM R256,1,0.10
+10,541-2.70KHCT-ND,CRCW06032K70FKEA,Vishay Dale,2.70 kOhm 1 % 100 ppm/K 0603 thick film,"MB RSDA,MB RSCL","SYS: MB RSDA,MB RSCL",2,0.11
+10,445-1297-1-ND,C1608C0G1H222J080AA,TDK,2.2 nF 50 V C0G 0603,C252 (on EVM),SYS: C252 (on EVM),1,0.17
+7,4713-GMC21X5R106K50NTCT-ND,GMC21X5R106K50NT,"Cal-Chip Electronics, Inc.",10 uF 50 V X5R 0805 (1.50 mm max thickness),"C (MB) x2, C (EVM) x5","SYS: C (MB) x2, C (EVM) x5",7,1.76
+1,612-SSQ-110-01-G-S-ND,SSQ-110-01-G-S,Samtec Inc.,"SSQ 1x10, 2.54 mm, standard-force contacts (-01), -G plating (gold mating), through-hole; mates TSW-110-07-L-S",MB CHG column x 45.998 (pins 1-10),SYS: MB CHG column x 45.998 (pins 1-10),1,2.56
+1,612-SSQ-112-01-G-S-ND,SSQ-112-01-G-S,Samtec Inc.,"SSQ 1x12, 2.54 mm, standard-force contacts (-01), -G plating (gold mating), through-hole; mates TSW-112-07-L-S",MB CHG column x 20.998 (pins 11-22),SYS: MB CHG column x 20.998 (pins 11-22),1,3.05
+10,S9001-ND,SPC02SYAN,Sullins Connector Solutions,"1x2 closed-top shunt, 2.54 mm, gold flash, 3 A",EVM JP4,SYS: EVM JP4,1,0.10
+4,36-25510-ND,25510,Keystone Electronics,"Hex standoff, M3 thread, female-female, 10.00 mm, natural nylon",EIB mount on the EVM plate,SYS: EIB mount on the EVM plate,2,0.58
+10,36-29341-ND,29341,Keystone Electronics,"M3x0.5, 6.00 mm below head, slotted pan head, nylon",EIB standoff screws,SYS: EIB standoff screws,4,0.22
+15,277-5469-ND,3200894,Phoenix Contact,"Insulated ferrule, 0.75 mm2 (18 AWG), 8 mm sleeve, gray, AI 0,75-8 GY",Ferrules: W1-W4 screw-terminal ends,SYS: W3/W4 or W1/W2 terminal ends (if terminated in a screw terminal),10,0.14
+15,277-2185-ND,3200014,Phoenix Contact,"Insulated ferrule, 0.5 mm2 (20 AWG), 8 mm sleeve, white, AI 0,5-8 WH",Ferrules: 20 AWG screw-terminal lead ends,SYS: 20 AWG lead ends (if terminated in a screw terminal),10,0.18
+10,298-1020-ND,PLT1M-C,Panduit Corp,"Panduit Pan-Ty miniature cable tie, 2.5 mm wide, natural, one tie","W-lead anchors A1/A2, chassis tie","SYS: W-lead anchors A1/A2, chassis tie",3,0.23

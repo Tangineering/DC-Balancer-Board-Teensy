@@ -314,6 +314,62 @@ if BOARD == "cr":
             and _pbox(p).distance(hull) < 2.0]
     row("D-35 / D-36 logic-IC pads within 2.0 mm of the divider tops (metric, F.Cu pads)", "; ".join(near) or "none",
         "%d pads" % len(near), "metric: lower is better (D-36)", "info")
+    # phase C (2026-11-15, R2-CRL-3): the D-36 metric itself, all layers. D-36: "the length of logic-net copper that
+    # runs parallel to analog-net copper inside the 2.0 mm zone"; this row reports the logic-net track centreline length
+    # inside the zone (an upper bound of the parallel length), the logic-net vias and pads inside it, and the nearest
+    # copper-to-pad gap per net. Zone = 2.0 mm around the F.Cu pads of the divider tops R102, R109, R111, R114 (A.8
+    # Analog). Logic nets (D-35): nets with a pad on a logic IC (layout_cr.LOGIC_ICS) or on a comparator output
+    # (U102.1 /H1, U103.1 /UVB) and the I2C nets /SCL, /SDA (the D-35 exempt list), less /GND, /3V3 and the analog nets (nets with a pad on a
+    # divider resistor R102-R104 or layout_cr.DIVIDERS). KiCad frame (mm). Report only, never a FAIL.
+    def _kpoly(p):
+        """The copper polygon(s) of a pad in the KiCad frame (mm)."""
+        sp = p.GetEffectivePolygon(pcbnew.F_Cu if p.IsOnLayer(pcbnew.F_Cu) else pcbnew.B_Cu, pcbnew.ERROR_INSIDE)
+        return [Polygon([(pcbnew.ToMM(sp.Outline(i).CPoint(k).x), pcbnew.ToMM(sp.Outline(i).CPoint(k).y))
+                         for k in range(sp.Outline(i).PointCount())]).buffer(0) for i in range(sp.OutlineCount())]
+    _tops = ("R102", "R109", "R111", "R114")
+    _tpads = [(r, p.GetNumber(), p.GetNetname(), unary_union(_kpoly(p)))
+              for r in _tops if r in FP for p in FP[r].Pads()]
+    _zone = unary_union([g.buffer(2.0) for r, n, nn, g in _tpads])
+    _analog = {p.GetNetname() for r in ("R102", "R103", "R104") + tuple(L.DIVIDERS) if r in FP for p in FP[r].Pads()}
+    _logic = {p.GetNetname() for r in L.LOGIC_ICS if r in FP for p in FP[r].Pads()}
+    _logic |= {p.GetNetname() for r, n in (("U102", "1"), ("U103", "1")) if r in FP for p in FP[r].Pads()
+               if p.GetNumber() == n}
+    _logic |= {p.GetNetname() for fp in FP.values() for p in fp.Pads()} & {"/SCL", "/SDA"}   # I2C (D-35: J1.7, J1.8)
+    _logic = sorted(n for n in _logic - _analog - {"/GND", "/3V3"} if n.startswith("/"))
+    _items = []
+    for nn in _logic:
+        ln, nv, lays, best = 0.0, 0, set(), None
+        for t in b.GetTracks():
+            if t.GetNetname() != nn:
+                continue
+            if t.GetClass() == "PCB_VIA":
+                c = Point(pcbnew.ToMM(t.GetPosition().x), pcbnew.ToMM(t.GetPosition().y))
+                cu = c.buffer(pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) / 2)
+                if cu.intersects(_zone):
+                    nv += 1
+            else:
+                seg = LineString([(pcbnew.ToMM(t.GetStart().x), pcbnew.ToMM(t.GetStart().y)),
+                                  (pcbnew.ToMM(t.GetEnd().x), pcbnew.ToMM(t.GetEnd().y))])
+                cu = seg.buffer(pcbnew.ToMM(t.GetWidth()) / 2)
+                inside = seg.intersection(_zone).length
+                if inside > 0:
+                    ln += inside
+                    lays.add(t.GetLayerName())
+            for r, n, pn, g in _tpads:
+                dd = cu.distance(g)
+                if best is None or dd < best[0]:
+                    best = (dd, "%s.%s %s" % (r, n, pn))
+        npd = sum(1 for fp in FP.values() for p in fp.Pads() if p.GetNetname() == nn
+                  and unary_union(_kpoly(p)).intersects(_zone))
+        if ln > 0 or nv or npd:
+            _items.append((nn, ln, nv, npd, sorted(lays), best))
+    row("D-36 metric (all layers): logic-net copper inside the 2.0 mm zone of the divider tops R102, R109, R111, R114 "
+        "(phase C, R2-CRL-3; logic nets: %s)" % ", ".join(_logic),
+        "; ".join("%s: %.2f mm track (%s), %d via(s), %d pad(s), nearest %.3f mm to %s" % (
+            nn, ln, "/".join(lays) or "-", nv, npd, best[0], best[1]) for nn, ln, nv, npd, lays, best in _items) or "none",
+        "%.2f mm track, %d vias, %d pads in total" % (sum(i[1] for i in _items), sum(i[2] for i in _items),
+                                                     sum(i[3] for i in _items)),
+        "metric: lower is better; exemptions where no other route exists (D-36); report only", "info")
     # dividers in the divider strip (A.8 / D-13)
     strip = box(23.15, 42.14, 36.50, 45.69)
     for ref in ("R109", "R110", "R111", "R112", "R114", "R115"):
@@ -486,7 +542,17 @@ if BOARD == "cr":
 else:
     import layout_eib as L
     fr = pb.Frame(L.YOFF)
-    row("A.9 outline", "Edge.Cuts", "%.1f x %.1f mm" % (L.W, L.H), "36.0 x 24.0 mm (D-13: 38 x 24)", "deviation D-13")
+    # phase C (2026-11-15, R2-EIL-3 / R2-CRL-6): the row measures the Edge.Cuts bounding box of the board (it printed
+    # the layout_eib constants W x H before), against the r9-25 A.9 outline 24.0 x 38.0 mm (design document A.9
+    # Outline row; LAYOUT_DECISIONS D-25). Superseded limit: "36.0 x 24.0 mm (D-25: 24.0 x 38.0)", result
+    # "deviation D-25".
+    eps = pcbnew.SHAPE_POLY_SET()
+    b.GetBoardPolygonOutlines(eps)      # the outline polygon (the Edge.Cuts line width is not counted)
+    ebb = eps.BBox()
+    ew, eh = pcbnew.ToMM(ebb.GetWidth()), pcbnew.ToMM(ebb.GetHeight())
+    nec = sum(1 for d in b.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts)
+    row("A.9 outline (r9-25: 24.0 x 38.0 mm, D-25)", "Edge.Cuts", "%d items, bounding box %.3f x %.3f mm" % (nec, ew, eh),
+        "24.0 x 38.0 mm", abs(ew - 24.0) < 1e-3 and abs(eh - 38.0) < 1e-3)
     ys = [pads_e(r, fr)["1"][1] for r in ("E8", "E3", "E4", "E2", "E7", "E1", "E5", "E6")]
     order = [r for r, _ in sorted({r: pads_e(r, fr)["1"][1] for r in L.EPOS}.items(), key=lambda kv: -kv[1])]
     row("A.9 E-pad order top to bottom", " ".join(order), "positions " + ", ".join("%.2f" % y for y in sorted(ys, reverse=True)),

@@ -1,0 +1,31 @@
+mode,P5,QUAL,T5,H1,UVB,GATE,ILIM_REL,CE_DRV,RFC_OFF,nCE,ILIM,F2_GATE_claim,F2_agrees,B7_claim
+Init (State 0),0,0,LOW,0,1,0,0,0,1,1,HELD,0,yes,
+Init (State 0),0,0,LOW,1,1,1,1,0,1,1,REL_REGEN,0,NO,
+Init (State 0),0,0,LOW,1,0,0,0,0,1,1,HELD,0,yes,
+Idle (State 1),0,0,LOW,0,1,0,0,0,1,1,HELD,0,yes,
+Idle (State 1),0,0,LOW,1,1,1,1,0,1,1,REL_REGEN,0,NO,
+Idle (State 1),0,0,LOW,1,0,0,0,0,1,1,HELD,0,yes,
+Run entry (qualification),0,1,LOW,0,1,0,1,0,1,1,REL_REGEN,0 (ILIM released by QF),yes,
+Run entry (qualification),0,1,LOW,1,1,1,1,0,1,1,REL_REGEN,0 (ILIM released by QF),NO,
+Run entry (qualification),0,1,LOW,1,0,0,1,0,1,1,REL_REGEN,0 (ILIM released by QF),yes,
+"Run cruise, regen armed",1,0,LOW,0,1,0,0,1,1,0,HELD,H1U,yes,
+"Run cruise, regen armed",1,0,LOW,1,1,1,1,1,1,0,REL_REGEN,H1U,yes,
+"Run cruise, regen armed",1,0,LOW,1,0,0,0,1,1,0,HELD,H1U,yes,
+FC window,1,0,HIGH,0,1,1,1,1,0,0,REL_FC,FCCP = 1,yes,
+FC window,1,0,HIGH,1,1,1,1,1,1,0,REL_REGEN,FCCP = 1,yes,
+FC window,1,0,HIGH,1,0,1,1,1,0,0,REL_FC,FCCP = 1,yes,
+Finish (State 3),0,0,LOW,0,1,0,0,0,1,1,HELD,0,yes,
+Finish (State 3),0,0,LOW,1,1,1,1,0,1,1,REL_REGEN,0,NO,
+Finish (State 3),0,0,LOW,1,0,0,0,0,1,1,HELD,0,yes,
+State 99,0,0,LOW,0,1,0,0,0,1,1,HELD,0,yes,
+State 99,0,0,LOW,1,1,1,1,0,1,1,REL_REGEN,0,NO,
+State 99,0,0,LOW,1,0,0,0,0,1,1,HELD,0,yes,
+Charger trip in FC window (T10),0,0,LOW,0,1,0,0,0,1,1,HELD,0,yes,
+Charger trip in FC window (T10),0,0,LOW,1,1,1,1,0,1,1,REL_REGEN,0,NO,
+Charger trip in FC window (T10),0,0,LOW,1,0,0,0,0,1,1,HELD,0,yes,
+Teensy reset (pins high-Z),0,0,LOW,0,1,0,0,0,1,1,HELD,0,yes,"H1U only (FCC = 0, so FCCP = 0)"
+Teensy reset (pins high-Z),0,0,LOW,1,1,1,1,0,1,1,REL_REGEN,0,NO,"H1U only (FCC = 0, so FCCP = 0)"
+Teensy reset (pins high-Z),0,0,LOW,1,0,0,0,0,1,1,HELD,0,yes,"H1U only (FCC = 0, so FCCP = 0)"
+EN net intermediate (INPUT_PULLUP),1,0,MID,0,1,0,0,1,0,0,HELD,-,,"FCCP = 0 and QF = 0, GATE = H1U only"
+EN net intermediate (INPUT_PULLUP),1,0,MID,1,1,1,1,1,1,0,REL_REGEN,-,,"FCCP = 0 and QF = 0, GATE = H1U only"
+EN net intermediate (INPUT_PULLUP),1,0,MID,1,0,0,0,1,0,0,HELD,-,,"FCCP = 0 and QF = 0, GATE = H1U only"
