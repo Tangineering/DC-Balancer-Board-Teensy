@@ -213,6 +213,12 @@ inside the rectangle is mainly for looks and to leave more of the board below ex
 The silk and reference step of a project must read arcs on Edge.Cuts (`GetBoardPolygonOutlines()`); a step that
 reads only straight segments loses the whole outline when the corners are filleted.
 
+Silkscreen side rule (operator, 2026-11-17): a top-side SMD part never gets a label on the bottom silkscreen, because
+the bottom of the board cannot be seen while the top is assembled. A reference with no legal top-side position goes
+to F.Fab only (the iBOM carries it). Labels of through-hole locations (lead pads, header pin marks) may stay on the
+bottom silkscreen, because both sides of a through-hole location are visible during assembly. In the charger EVM
+project, `hardware/charger_evm_r8/gen/silk_no_bottom_smd.py <board>` enforces the rule as the last in-place step.
+
 1. Find the mechanical reasons for the present outline in the design record before you trim: an overhang that keys
    the board, a cover over parts below, a connector reach. Keep each such area as an `--ear` box (plan frame). A
    board that is keyed by landing on parts when it is turned the wrong way keeps the key only while its outline

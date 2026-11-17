@@ -58,6 +58,7 @@ SEP_W = 0.15               # separator line between the J1 pin column and the J1
 MASK_GAP, HOLE_GAP, VIA_GAP, MARK_GAP, TEXT_GAP, EDGE_BAND = 0.10, 0.15, 0.05, 0.30, 0.10, 0.25
 NEAR_MARGIN, RADIUS, STEP = 0.10, 3.0, 0.05
 STYLES = [(1.0, 1.0), (0.8, 0.8), (0.8, 0.6)]   # (height, width) mm, stroke 0.15 mm
+BOTTOM_REFS = False   # operator ruling 2026-11-17: no B.Silkscreen reference for a top-side SMD part
 
 b = pcbnew.LoadBoard(PCB)
 mexp = M(b.GetDesignSettings().m_SolderMaskExpansion)
@@ -298,7 +299,18 @@ for ref in REFS:
                       "courtyard %.2f mm, to nearest other courtyard %.2f mm"
                       % (ref, x, y, ang, h, w, g.bounds[0], g.bounds[2], g.bounds[1], g.bounds[3], d_own, d_oth))
         continue
-    # fallback: B.Silkscreen, mirrored, over the part (phase A convention for R107). The CR has no bottom-side part;
+    # Operator ruling 2026-11-17: no B.Silkscreen for a top-side SMD part (the bottom cannot be seen during assembly).
+    # Without a legal top-side position the reference field moves to F.Fab, hidden; the F.Fab ${REFERENCE} text stays.
+    if not BOTTOM_REFS:
+        assert [it for it in fp.GraphicalItems() if it.GetLayer() == pcbnew.F_Fab and it.GetClass() == "PCB_TEXT"
+                and it.GetText() == "${REFERENCE}"], (ref, "no F.Fab reference text")
+        f.SetLayer(pcbnew.F_Fab)
+        f.SetMirrored(False)
+        f.SetVisible(False)
+        report.append("%s: F.Fab only (no legal top-side position; no bottom-side reference, ruling 2026-11-17); "
+                      "F.Fab ${REFERENCE} kept" % ref)
+        continue
+    # superseded fallback (BOTTOM_REFS True): B.Silkscreen, mirrored, over the part. The CR has no bottom-side part;
     # the text must keep the bottom-side margins (B.Mask openings, holes, via drills, other B.Silkscreen items, edge
     # band) and its ink centre must lie inside the own courtyard and nearer the own part centre than any other part
     # centre. Preferred: the larger text, then the smaller offset from the part centre, then 0 degrees.

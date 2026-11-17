@@ -15,8 +15,9 @@ under an unambiguity rule that gen/silk_refs.py (D-59, D-64) did not have:
 
 Text 0.8 mm high with 0.15 mm stroke (fab_silk_text); where no 0.8 x 0.8 mm position exists, a 0.8 mm high, 0.6 mm
 wide text is tried (height and stroke stay at the rule). The fitted parts are placed first; a reference that finds
-no position moves to F.Fab and is listed (the iBOM then carries it); for a fitted part, a mirrored B.Silkscreen text
-of the reference is also placed over the part, so that the part can be identified from the bottom. A randomized greedy search (fixed seed) keeps
+no position moves to F.Fab and is listed (the iBOM then carries it). Operator ruling 2026-11-17: no mirrored
+B.Silkscreen text for a top-side SMD part (the bottom cannot be seen during assembly); BOTTOM_REFS False removes the
+bottom texts of an earlier run and places none. A randomized greedy search (fixed seed) keeps
 the assignment with the most fitted parts on the silkscreen, then the smallest total distance. Copper, nets,
 footprint positions and the library footprints are not changed. Rerunning gives the same result (fixed seed).
 
@@ -59,6 +60,7 @@ MASK_GAP, SILK_GAP, TEXT_GAP, REF_GAP, EDGE = 0.10, 0.10, 0.40, 0.25, 0.25
 # VIA_HARD True removes 5 fitted references. TIE is the cost band of the spread pass.
 CENTRE_RULE, VIA_HARD, CENTRE_PEN, TIE, VIA_GAP = True, False, 0.0, 0.005, 0.05
 BACK_GAP = 0.80   # phase B: gap between two bottom-side reference texts
+BOTTOM_REFS = False   # operator ruling 2026-11-17: no B.Silkscreen reference for a top-side SMD part
 DRILL_HARD = True   # phase B: no text stroke over a via drill (stroke level; the ink box may span a drill)
 RADIUS, AMBIG, STEP = 2.0, 0.15, 0.1
 SIZES = [(0.8, 0.8), (0.6, 0.8)]      # (width, height) mm; stroke 0.15
@@ -302,7 +304,7 @@ for d in b.GetDrawings():
     if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.B_SilkS:
         bobst.append(ink(d).buffer(TEXT_GAP))
 back = []
-for r in [r for r in fab if r in fitted]:
+for r in ([r for r in fab if r in fitted] if BOTTOM_REFS else []):   # none since the ruling of 2026-11-17
     fp = b.FindFootprintByReference(r)
     c = court[r].centroid
     t = pcbnew.PCB_TEXT(b)

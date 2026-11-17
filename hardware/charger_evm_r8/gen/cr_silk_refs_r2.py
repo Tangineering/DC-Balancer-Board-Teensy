@@ -32,6 +32,7 @@ PCB = "cr/cr.kicad_pcb"
 REFS = ["R107", "C102c"]
 MASK_GAP, HOLE_GAP, SILK_GAP, EDGE_BAND, VIA_GAP, RADIUS, STEP = 0.05, 0.15, 0.10, 0.25, 0.05, 4.0, 0.05
 STYLES = [(1.0, 1.0), (0.8, 0.8), (0.8, 0.6)]   # (height, width), stroke 0.15 mm
+BOTTOM_REFS = False   # operator ruling 2026-11-17: no B.Silkscreen reference for a top-side SMD part
 
 b = pcbnew.LoadBoard(PCB)
 mexp = M(b.GetDesignSettings().m_SolderMaskExpansion)
@@ -139,9 +140,17 @@ for ref in REFS:
                                        (" (over another courtyard)" if d_oth == 0.0 else "") +
                                        (" (crosses a tented via)" if vh else "")))
         continue
-    # no unambiguous top-side position (every legal position lies nearer another part than its own): the reference
-    # goes onto B.Silkscreen, mirrored, centred over the part (gen/eib_silk_refs_r2.py uses the same fallback). The CR
-    # has no part on the bottom side; the text must clear the B.Mask openings, holes and other B.Silkscreen items.
+    # no unambiguous top-side position (every legal position lies nearer another part than its own).
+    # Operator ruling 2026-11-17: no B.Silkscreen for a top-side SMD part (the bottom cannot be seen during assembly).
+    # The reference field moves to F.Fab, hidden; the footprint's F.Fab ${REFERENCE} text and the iBOM carry it.
+    if not BOTTOM_REFS:
+        f.SetLayer(pcbnew.F_Fab)
+        f.SetMirrored(False)
+        f.SetVisible(False)
+        print("%s: F.Fab only (no unambiguous top-side position; no bottom-side reference, ruling 2026-11-17)" % ref)
+        continue
+    # superseded fallback (BOTTOM_REFS True): B.Silkscreen, mirrored, centred over the part. The CR has no part on the
+    # bottom side; the text must clear the B.Mask openings, holes and other B.Silkscreen items.
     f.SetLayer(pcbnew.B_SilkS)
     f.SetMirrored(True)
     f.SetTextSize(pcbnew.VECTOR2I(F(1.0), F(1.0)))
