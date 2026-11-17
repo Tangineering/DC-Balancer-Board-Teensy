@@ -720,14 +720,17 @@ no outline trim, step 5 is new, and the old steps 5 to 7 are now 6 to 8.)
      `gen/sync_fields.py --add-missing cr/cr.kicad_pcb cr/cr.net` (D-82, D-88), then `"$PY" gen/bom_split.py bom_<date>` (writes the
      BOM folder and refuses a netlist MPN that names a different part than its BOM row; D-83);
    - `gen/cr_silk_fix_r4.py` (D-85, added 2026-11-15; the "VIN1"/"GND" labels and the W1 reference);
+   - `gen/silk_no_bottom_smd.py cr/cr.kicad_pcb`, then `gen/assembly_guide.py apply cr/cr.kicad_pcb` (D-97, added
+     2026-11-17; after a placement change, run `gen/assembly_guide.py dump cr` and `plot cr` before `apply`);
    - `gen/cr_silk_refs_report.py` (writes `cr/silk_refs.md`; reads the board only).
     The EIB order: `gen/eib_j201_pour_clearance.py` (D-70), `gen/eib_dnp_paste.py` (D-71), `gen/eib_pin1_marks.py`
     (D-72), `gen/eib_board_marking.py` (D-74, D-78), `gen/eib_wire_labels.py` (D-73), `gen/eib_silk_refs_r2.py
     eib/silk_refs.md` (D-74, D-78), `gen/eib_stackup.py` (D-76), then `gen/eib_board_marking.py` and
     `gen/eib_silk_refs_r2.py eib/silk_refs.md` again, and after any `gen/netlist.py` change the EIB schematic, ERC and
     netlist steps, `gen/sync_fields.py --add-missing eib/eib.kicad_pcb eib/eib.net` (D-82, D-88) and
-    `gen/bom_split.py bom_<date>` (D-83; one run writes the BOMs of both boards), and last `gen/eib_silk_fix_r3.py`
-    (D-86, added 2026-11-15). On a scratch copy of the `014c745`
+    `gen/bom_split.py bom_<date>` (D-83; one run writes the BOMs of both boards), `gen/eib_silk_fix_r3.py`
+    (D-86, added 2026-11-15), and last `gen/silk_no_bottom_smd.py eib/eib.kicad_pcb` and `gen/assembly_guide.py apply
+    eib/eib.kicad_pcb` (D-97, added 2026-11-17). On a scratch copy of the `014c745`
     boards these orders reproduce the CR exactly and the EIB except the F.Fab field positions of C202, C203, R252,
     R254, U201 and U202. Copper does not change in any step. The 2026-11-15 replay with the two
     new scripts at the end gives the same result. Known tool residuals: `gen/cr_silk_refs_r2.py` stops on the current
@@ -742,7 +745,9 @@ no outline trim, step 5 is new, and the old steps 5 to 7 are now 6 to 8.)
 11. Fab package, once DRC is clean: `bash gen/export.sh cr <date>`, then `"$PY" gen/fab_readme.py cr <date>
     [<reference package dir>]`. `export.sh` runs ERC and DRC first and writes the package only from a board that
     passes both. Since D-77 it also runs `gen/npth_check.py` after DRC and stops on copper at an NPTH hole
-    (`reports/npth_check.txt`). The current packages `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` were written on
+    (`reports/npth_check.txt`). Since D-97 it also copies `assembly_guide/<board>/` into `assembly/guide/`. The
+    current packages are `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/` (2026-11-17: D-97 silkscreen, block-layout
+    schematic; copper unchanged). (**Superseded 2026-11-17:** the next sentence.) The packages `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` were written on
     2026-11-15 by `bash gen/export.sh cr 2026-11-14` and `bash gen/export.sh eib 2026-11-14`, and written again in place
     on 2026-11-15 after D-85, D-86 and D-88 (D-90). (**Superseded
     2026-11-14, packages exported:** "The next packages are `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`, to be

@@ -786,6 +786,110 @@
     140.97
    ],
    "size": 1.27
+  },
+  {
+   "text": "FCCNN = ~{FCCN}",
+   "at": [
+    50.8,
+    81.28
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "P5N = ~{CHG_ARM}",
+   "at": [
+    50.8,
+    83.82
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "spare: 3A = GND",
+   "at": [
+    50.8,
+    86.36
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U118A: H1U = H1.UVB",
+   "at": [
+    95.25,
+    76.2
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U118B: FCCP = FCC_ON.FCCNN",
+   "at": [
+    95.25,
+    78.74
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U107: QF = QUAL.FCCN.P5N",
+   "at": [
+    97.79,
+    134.62
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "(3-input AND)",
+   "at": [
+    97.79,
+    137.16
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U110A: GATE = H1U + FCCP",
+   "at": [
+    153.67,
+    76.2
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U110B: ILIM_REL = GATE + QF",
+   "at": [
+    153.67,
+    78.74
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U106A: CE_DRV = CHG_ARM + GND",
+   "at": [
+    153.67,
+    40.64
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "(OR used as buffer)",
+   "at": [
+    153.67,
+    43.18
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U106B: RFC_OFF = FCCN + H1U",
+   "at": [
+    153.67,
+    45.72
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "Gate notes: '.' = AND, '+' = OR, overbar = NOT",
+   "at": [
+    132.08,
+    144.78
+   ],
+   "size": 1.27
   }
  ]
 }

@@ -6067,7 +6067,8 @@
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "Q202"
 			(at 2.3 2.4 0)
-			(layer "F.SilkS")
+			(layer "F.Fab")
+			(hide yes)
 			(uuid "b2c8109a-5d8d-491b-851e-8203a886a7b2")
 			(effects
 				(font
@@ -7144,18 +7145,6 @@
 			(justify left mirror)
 		)
 	)
-	(gr_text "R254"
-		(at 9.27 27.879999 0)
-		(layer "B.SilkS")
-		(uuid "40d89c05-af7a-41b6-9a6b-d786ed7dfa5c")
-		(effects
-			(font
-				(size 0.8 0.6)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
 	(gr_text "E4 DNP"
 		(at 7.804638 21.636752 0)
 		(layer "B.SilkS")
@@ -7214,90 +7203,6 @@
 				(thickness 0.15)
 			)
 			(justify left mirror)
-		)
-	)
-	(gr_text "R252"
-		(at 10.12 25.029999 0)
-		(layer "B.SilkS")
-		(uuid "85fb6ff8-23e0-463c-ad14-f374fb4eefce")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "R251"
-		(at 11.52 35.63 0)
-		(layer "B.SilkS")
-		(uuid "4113c47a-f37a-4d72-b799-a55877888561")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "C201"
-		(at 12.02 33.68 0)
-		(layer "B.SilkS")
-		(uuid "ba1a4eda-e613-4eba-92cb-ad38fbaeadb0")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "C202"
-		(at 12.67 28.23 0)
-		(layer "B.SilkS")
-		(uuid "2fa74460-a964-4f16-ad79-ecded8d55bb6")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "U201"
-		(at 12.995 30.705 0)
-		(layer "B.SilkS")
-		(uuid "d5e1e2c9-096a-46aa-95b2-3c5f152cdb48")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "R271"
-		(at 9.07 30.83 90)
-		(layer "B.SilkS")
-		(uuid "5b781a21-54a5-4ffb-a7a5-176a649ad07b")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "U202"
-		(at 13.495 23.205 90)
-		(layer "B.SilkS")
-		(uuid "ec7a93cf-335d-4bfd-af06-ba02c08d6989")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.15)
-			)
-			(justify mirror)
 		)
 	)
 	(segment

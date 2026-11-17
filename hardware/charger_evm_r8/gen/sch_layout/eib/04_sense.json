@@ -377,7 +377,7 @@
    "text": "U204: far-end /CE sense (DNP, r9-2)",
    "at": [
     93.98,
-    80.01
+    77.47
    ],
    "size": 1.27
   },
@@ -410,6 +410,38 @@
    "at": [
     127.0,
     90.17
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U203 (TLV3012B): N_U203O HIGH when N_ISP (IN+) > N_ISM (IN-)",
+   "at": [
+    93.98,
+    26.67
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "N_ISM = REF203 x R261/(R260+R261); push-pull output",
+   "at": [
+    93.98,
+    29.21
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U204 (TLV3012B): N_U204O HIGH when N_CSP (IN+) > REF204 (IN-)",
+   "at": [
+    93.98,
+    80.01
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "IN- = own REF pin (REF204, 1.223-1.260 V); push-pull output",
+   "at": [
+    93.98,
+    82.55
    ],
    "size": 1.27
   }

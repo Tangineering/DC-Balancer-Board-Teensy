@@ -16,13 +16,19 @@ the docstring of that script.
   own courtyard.
 - A reference whose text centre lies nearer a fitted part without a top-side label than its own part leaves the top
   side.
-- A fitted part without a top-side reference has its reference on F.Fab and a mirrored B.Silkscreen text over the
-  part, read from the bottom. Two bottom-side texts keep 0.80 mm from each other.
+- A fitted part without a top-side reference has its reference on F.Fab only, and the assembly guide
+  (`assembly_guide/eib/`) shows it. The same holds for a reference whose ink lies more than 1.0 mm from its own pads
+  or nearer the pads of another part (operator rulings 2026-11-17, D-97). (**Superseded 2026-11-17, D-97:** "has its
+  reference on F.Fab and a mirrored B.Silkscreen text over the part, read from the bottom. Two bottom-side texts keep
+  0.80 mm from each other.")
 
 ## 2. Result
 
-On F.Silkscreen: 25 of 38 references, 18 of the 26 fitted parts among them. Fitted parts with a bottom-side text:
-C201, C202, R251, R252, R254, R271, U201 and U202. DNP parts with the reference on F.Fab only: C203, R259, R264,
+On F.Silkscreen: 24 of 38 references, 17 of the 26 fitted parts among them. Fitted parts with the reference on F.Fab
+only, shown in the assembly guide: C201, C202, R251, R252, R254, R271, U201 and U202 (their bottom texts were removed,
+D-97) and Q202 (its label lay nearer the pads of R260, 0.33 mm, than its own, 0.80 mm; MARGINAL, D-97).
+(**Superseded 2026-11-17, D-97:** "25 of 38 references, 18 of the 26 fitted parts among them. Fitted parts with a
+bottom-side text: C201, C202, R251, R252, R254, R271, U201 and U202.") DNP parts with the reference on F.Fab only: C203, R259, R264,
 R265 and U203. U201 is the only SSOP-8 (DCT) part and U202 the only SC70-5 (DCK) part on the EIB; both carry a
 pin-1 dot.
 
@@ -37,20 +43,20 @@ Gaps in mm. A gap of 0.00 mm is a gap below 0.005 mm; no ink box overlaps a cour
 
 | Reference | DNP | Text w x h (mm) | Angle (deg) | Gap to own courtyard (mm) | Gap to nearest other courtyard (mm) | Note |
 |---|---|---|---|---|---|---|
-| C201 |  | 0.8 x 0.8 | 0 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
-| C202 |  | 0.8 x 0.8 | 0 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
+| C201 |  | 0.8 x 0.8 | 0 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
+| C202 |  | 0.8 x 0.8 | 0 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
 | C203 | DNP | - | - | - | - | F.Fab (no unambiguous silkscreen position) |
 | C204 | DNP | 0.6 x 0.8 | 0 | 0.11 | 0.34 | crosses a tented via; text centre nearer another part |
 | C205 |  | 0.8 x 0.8 | 0 | 0.11 | 0.48 | text centre nearer another part |
 | J201 |  | 0.8 x 0.8 | 0 | 0.13 | 0.69 |  |
 | Q201 |  | 0.8 x 0.8 | 90 | 0.12 | 0.96 |  |
-| Q202 |  | 0.8 x 0.8 | 0 | 0.02 | 0.17 |  |
+| Q202 |  | - | - | - | - | F.Fab only; assembly guide (MARGINAL label moved 2026-11-17, D-97; was 0.8 x 0.8, 0 deg, gaps 0.02 / 0.17) |
 | Q203 |  | 0.8 x 0.8 | 0 | 0.05 | 0.59 |  |
 | R250 |  | 0.8 x 0.8 | 0 | 0.15 | 0.37 | text centre nearer another part |
-| R251 |  | 0.8 x 0.8 | 0 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
-| R252 |  | 0.8 x 0.8 | 0 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
+| R251 |  | 0.8 x 0.8 | 0 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
+| R252 |  | 0.8 x 0.8 | 0 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
 | R253 |  | 0.8 x 0.8 | 90 | 0.06 | 0.27 | crosses a tented via; text centre nearer another part |
-| R254 |  | 0.6 x 0.8 | 0 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
+| R254 |  | 0.6 x 0.8 | 0 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
 | R255 |  | 0.6 x 0.8 | 0 | 0.14 | 0.34 |  |
 | R257 |  | 0.8 x 0.8 | 90 | 0.10 | 0.49 | crosses a tented via; text centre nearer another part |
 | R258 | DNP | 0.8 x 0.8 | 0 | 0.29 | 0.66 | crosses a tented via |
@@ -66,13 +72,13 @@ Gaps in mm. A gap of 0.00 mm is a gap below 0.005 mm; no ink box overlaps a cour
 | R268 |  | 0.8 x 0.8 | 90 | 0.11 | 0.42 | text centre nearer another part |
 | R269 |  | 0.8 x 0.8 | 0 | 0.12 | 0.30 |  |
 | R270 |  | 0.8 x 0.8 | 0 | 0.05 | 1.84 |  |
-| R271 |  | 0.8 x 0.8 | 90 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
+| R271 |  | 0.8 x 0.8 | 90 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
 | R273 |  | 0.8 x 0.8 | 0 | 0.12 | 1.01 |  |
 | R274 |  | 0.8 x 0.8 | 0 | 0.08 | 0.60 |  |
 | R275 |  | 0.6 x 0.8 | 90 | 0.14 | 0.44 |  |
 | R276 |  | 0.8 x 0.8 | 0 | 0.09 | 0.33 |  |
-| U201 |  | 0.8 x 0.8 | 0 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
-| U202 |  | 0.8 x 0.8 | 90 | - | - | F.Fab; B.Silkscreen text over the part (bottom view) |
+| U201 |  | 0.8 x 0.8 | 0 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
+| U202 |  | 0.8 x 0.8 | 90 | - | - | F.Fab only; assembly guide (bottom text removed 2026-11-17, D-97) |
 | U203 | DNP | - | - | - | - | F.Fab (no unambiguous silkscreen position) |
 | U204 | DNP | 0.6 x 0.8 | 0 | 0.00 | 0.25 | text centre nearer another part |
 
@@ -97,8 +103,9 @@ position for "E4", so it reads "4".
 | E5 | E5 | 0.8 x 0.8 | 0 | 3.07-4.36, 38.85-39.80 | 0.12 | 0.54 |
 | E6 (DNP) | E6 | 0.6 x 0.8 | 90 | 0.29-1.24, 42.63-43.64 | 0.11 | 1.99 |
 
-Table 4.2 lists the B.Silkscreen E landing labels after the phase C fix. Each label keeps at least 0.80 mm from every
-bottom reference text, the gap that section 1 sets between two bottom-side texts.
+Table 4.2 lists the B.Silkscreen E landing labels after the phase C fix. Each label kept at least 0.80 mm from every
+bottom reference text. Since D-97 (2026-11-17) the board has no bottom reference texts, and the E landing labels
+are the only bottom silkscreen; the nearest-reference column is the record of the 2026-11-15 board.
 
 | Label | Width x height (mm) | Ink box x (mm) | Nearest bottom reference, gap (mm) | Stroke to nearest via drill (mm) |
 |---|---|---|---|---|

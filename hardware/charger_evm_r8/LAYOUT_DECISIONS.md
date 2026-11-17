@@ -13,6 +13,12 @@ design names no other printed circuit board. The bond coupon of the E BOM is a s
 workshop. The FT1/FT2 feet and the B1R wedge are machined parts, and the EVM plate is a mechanical plate. None of
 these is a KiCad project.
 
+Status on 2026-11-17: both schematics are laid out in functional blocks with operation notes at the comparators and
+gates (`gen/sch_blocks.py`, `gen/sch_layout/`; the KiCad netlist is identical, ERC 0, DRC schematic parity 0), and
+both boards carry the D-97 silkscreen (no bottom labels of top-side SMD parts; marginal and missing labels in the
+assembly guide). Copper is unchanged. The current packages are `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/` (not
+ordered); they supersede `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` in the table below.
+
 Status on 2026-11-15 (phase C of the 2026-11-14 round):
 
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
@@ -255,7 +261,12 @@ stage; it does not route the plug-on CR.
 8. `gen/sync_fields.py --add-missing cr/cr.kicad_pcb cr/cr.net`, after `gen/sch.py cr cr` and the `kicad-cli` ERC and
    netlist export (D-82, D-88);
 9. `gen/cr_silk_fix_r4.py` (D-85, added 2026-11-15);
-10. `gen/cr_silk_refs_report.py`, which writes `cr/silk_refs.md` and does not change the board (D-78).
+10. `gen/silk_no_bottom_smd.py cr/cr.kicad_pcb` (D-97, added 2026-11-17);
+11. `gen/assembly_guide.py apply cr/cr.kicad_pcb` (D-97, added 2026-11-17); run `gen/assembly_guide.py dump cr` and
+    `plot cr` before it whenever a placement changes, because after `apply` every guide part reads NONE;
+12. `gen/cr_silk_refs_report.py`, which writes `cr/silk_refs.md` and does not change the board (D-78; since D-97 it
+    also lists the hidden F.Fab references of the guide parts).
+(**Superseded 2026-11-17, D-97:** the ten-step CR order that ended with `gen/cr_silk_refs_report.py` as step 10.)
 (**Superseded 2026-11-15, D-85 and D-88:** the nine-step CR order without `gen/cr_silk_fix_r4.py` and without
 `--add-missing`.)
 
@@ -272,7 +283,11 @@ On the EIB:
    the J201 map of step 5);
 9. `gen/sync_fields.py --add-missing eib/eib.kicad_pcb eib/eib.net`, after `gen/sch.py eib eib` and the `kicad-cli`
    ERC and netlist export (D-82, D-88);
-10. `gen/eib_silk_fix_r3.py` (D-86, added 2026-11-15), always last.
+10. `gen/eib_silk_fix_r3.py` (D-86, added 2026-11-15);
+11. `gen/silk_no_bottom_smd.py eib/eib.kicad_pcb` (D-97, added 2026-11-17);
+12. `gen/assembly_guide.py apply eib/eib.kicad_pcb` (D-97, added 2026-11-17), always last; `dump eib` and `plot eib`
+    before it whenever a placement changes.
+(**Superseded 2026-11-17, D-97:** "10. `gen/eib_silk_fix_r3.py` (D-86, added 2026-11-15), always last.")
 (**Superseded 2026-11-15, D-86 and D-88:** the nine-step EIB order without `gen/eib_silk_fix_r3.py` and without
 `--add-missing`.)
 
@@ -523,7 +538,7 @@ board (D-74, D-78). A reference with no legal top-side position goes onto B.Silk
 its F.Fab `${REFERENCE}` text stays: 7 CR references and 8 fitted EIB references (D-78). These bottom-side references
 can be read only before the CR is plugged onto the MB and before the EIB is mounted on its standoffs.
 
-**Amended 2026-11-17 (operator rulings; the D number is assigned by the design owner).** The bottom-side fallback
+**Amended 2026-11-17 (operator rulings, D-97).** The bottom-side fallback
 above is withdrawn. The operator cannot see the bottom of a board while the top-side parts are assembled, so a
 top-side SMD part never has a B.Silkscreen label. In addition, the top silkscreen keeps only the reference labels
 that sit at their own parts. A top-side SMD part goes into the **assembly guide** instead of the silkscreen when one
@@ -544,10 +559,10 @@ the bottom-side texts of top-side SMD parts; `gen/silk_no_bottom_smd.py` does th
 scripts `gen/cr_silk_refs_r2.py`, `gen/cr_silk_fix_r3.py` and `gen/eib_silk_refs_r2.py` no longer place a
 bottom-side reference (`BOTTOM_REFS = False`).
 
-State on 2026-11-17: the rulings and tools are in place, and the boards are not edited (the operator froze the
-design files, which carry hand-edits). On the current boards the guide holds 62 of the 69 CR top-side SMD parts
+State on 2026-11-17, after D-97: both boards are edited. The guide holds 62 of the 69 CR top-side SMD parts
 (24 NONE, 38 MARGINAL) and 14 of the 37 EIB parts (13 NONE, 1 MARGINAL). The CR count is high because the D-74 and
-D-78 placement put most CR labels 2 to 3.5 mm from their parts.
+D-78 placement put most CR labels 2 to 3.5 mm from their parts. (**Superseded 2026-11-17, D-97:** "the rulings and
+tools are in place, and the boards are not edited (the operator froze the design files, which carry hand-edits).")
 
 ### 5.3 Footprint interior, divider strip and tab Y (A.8)
 
@@ -2728,6 +2743,32 @@ thresholds 0.40 / 0.50 A; regen VINDPM 19.0 V retained (2026-11-16, operator rul
     band, and an H.7 capability of about 21.07 W.
 - Reversal: restore PM9 (fit 2.7 kOhm at MB RSDA/RSCL) and the 400 kHz FR-07 caps; restore the 1.5 ms budget and the
   0.30 A thresholds in the design document.
+
+**D-97. No bottom silkscreen for top-side SMD parts; marginal and missing labels go into the assembly guide
+(2026-11-17, operator rulings; boards edited 2026-11-17).**
+
+- Decision: a top-side SMD part never has a B.Silkscreen label, and the top silkscreen keeps only reference labels
+  that sit at their own parts. A part with no visible top-side label, or with a label more than 1.0 mm from its own
+  pads or nearer another part's pads, has its reference on F.Fab (hidden) and is shown in the assembly guide
+  (`assembly_guide/<board>/`, section 5.2 amendment of 2026-11-17). Labels of wired connections, holes and
+  through-hole parts (J, W, E, H, MH, TP) stay on the silkscreen on either side. D-78's bottom-side fallback is
+  withdrawn.
+- Basis: the operator's words, 2026-11-17: "Silkscreen cannot go on the opposite side of the board for SMD
+  components. I will not be able to see the bottom of the board while assembling", and "For components that have no
+  valid silkscreen placement, instead create assembly guide images ... let's also use this system for any components
+  that have marginal silkscreen label placement". Wired-connection labels stay: "they're used after assembly as well".
+- Board edit: `gen/silk_no_bottom_smd.py`, then `gen/assembly_guide.py apply`, on both boards (section 2 orders,
+  steps 10-11 CR and 11-12 EIB). CR: 7 bottom references moved to F.Fab (C102a, C102c, C119, C131, R107, U107, U119)
+  and 38 MARGINAL references moved to F.Fab; the bottom silkscreen holds only the J1 "1" mark. EIB: the 8 bottom
+  reference texts removed (C201, C202, R251, R252, R254, R271, U201, U202) and the Q202 MARGINAL reference moved to
+  F.Fab; the bottom silkscreen holds only the eight E landing labels.
+- Verification: `gen/pcbdiff.py` against `7826788` gives CR 692 / 692 segments, 420 / 420 vias, 0 zone changes and
+  45 footprints changed in their reference field only; EIB 332 / 332 segments, 93 / 93 vias, 0 zone changes, Q202
+  and 8 board texts. DRC with schematic parity is 0 / 0 / 0 on both boards; a second run of both scripts changes
+  nothing; `cr/constraint_check.md` and `eib/constraint_check.md` are unchanged. A `dump` after `apply` gives the same
+  62 CR and 14 EIB guide parts as the committed guide pages.
+- Packages: `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/` carry the guide pages in `assembly/guide/`.
+- Reversal: restore both boards from `7826788` (copper is identical) and re-export.
 
 ## 9. Verification
 

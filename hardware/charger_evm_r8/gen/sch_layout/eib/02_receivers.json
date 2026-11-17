@@ -544,7 +544,15 @@
    "size": 1.27
   },
   {
-   "text": "Inverting open drain: A HIGH -> Y sinks.",
+   "text": "to EVM /CE (TP36)",
+   "at": [
+    142.24,
+    34.29
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U201 (3 inverters, open drain, Y has no high drive):",
    "at": [
     121.92,
     66.04
@@ -552,7 +560,7 @@
    "size": 1.27
   },
   {
-   "text": "Pull-ups: /CE R272/R272b (EVM),",
+   "text": "1Y nCE_DRV = NOT(N_CEIN)",
    "at": [
     121.92,
     68.58
@@ -560,7 +568,7 @@
    "size": 1.27
   },
   {
-   "text": "Q203_G R271, Q202_G R254",
+   "text": "2Y Q203_G = NOT(N_RAIN)",
    "at": [
     121.92,
     71.12
@@ -568,7 +576,39 @@
    "size": 1.27
   },
   {
-   "text": "A HIGH -> Y sinks Q201 gate",
+   "text": "3Y Q202_G = NOT(N_RFIN)",
+   "at": [
+    121.92,
+    73.66
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "A HIGH -> Y sinks; A LOW -> Y off (pulled up).",
+   "at": [
+    121.92,
+    76.2
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "Pull-ups: /CE R272/R272b (EVM),",
+   "at": [
+    121.92,
+    78.74
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "Q203_G R271, Q202_G R254",
+   "at": [
+    121.92,
+    81.28
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "U202: Y Q201_G = NOT(N_RBIN), open drain",
    "at": [
     121.92,
     111.76
@@ -576,7 +616,7 @@
    "size": 1.27
   },
   {
-   "text": "(R252 to REGN); separate driver on",
+   "text": "A HIGH -> Y sinks Q201 gate (R252 to REGN);",
    "at": [
     121.92,
     114.3
@@ -584,18 +624,10 @@
    "size": 1.27
   },
   {
-   "text": "its own conductor (B.6)",
+   "text": "separate driver on its own conductor (B.6)",
    "at": [
     121.92,
     116.84
-   ],
-   "size": 1.27
-  },
-  {
-   "text": "to EVM /CE (TP36)",
-   "at": [
-    142.24,
-    34.29
    ],
    "size": 1.27
   }

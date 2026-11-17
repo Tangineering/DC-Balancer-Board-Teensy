@@ -41,6 +41,10 @@ INTERACTIVE_HTML_BOM_CLI_MODE=1 INTERACTIVE_HTML_BOM_NO_DISPLAY=1 "$VENV/generat
 # (--dnp-field kicad_dnp: InteractiveHtmlBom sets kicad_dnp from the board footprint DNP attribute, so DNP
 #  parts are left out of the BOM table (iBOM "skipped" set); the former --dnp-field "" showed them as fitted, 2026-11-13)
 
+# assembly guide (D-97): the committed pages of gen/assembly_guide.py (dump + plot before apply)
+mkdir -p "$O/assembly/guide"
+cp assembly_guide/"$B"/*.png assembly_guide/"$B"/README.md "$O/assembly/guide/"
+
 # documentation
 "$K" sch export pdf -o "$O/docs/${B}-schematic.pdf" "$SCH" >/dev/null
 "$K" pcb export pdf --layers "$CU,F.SilkS,B.SilkS,F.Fab,B.Fab,F.Mask,B.Mask" --common-layers Edge.Cuts \

@@ -81,6 +81,14 @@ REASONS = {
     ("eib_2026-11-13c", "F_Silkscreen.gto"): _SILK_EIB,
     ("eib_2026-11-13c", "B_Silkscreen.gbo"): _SILK_EIB,
     ("eib_2026-11-13c", "job.gbrjob"): "expected: D-76, finish ENIG and the layer colours; the thicknesses are unchanged",
+    # 2026-11-17 (D-97): reference moves only; copper, mask, paste and drill are unchanged
+    ("cr_2026-11-14", "F_Silkscreen.gto"): "expected: D-97, the 38 MARGINAL references (label more than 1.0 mm from "
+        "its own pads or nearer another part's pads) moved to F.Fab; those parts are in the assembly guide",
+    ("cr_2026-11-14", "B_Silkscreen.gbo"): "expected: D-97, the 7 bottom references of top-side SMD parts (C102a, "
+        "C102c, C119, C131, R107, U107, U119) moved to F.Fab; only the J1 \"1\" mark remains",
+    ("eib_2026-11-14", "F_Silkscreen.gto"): "expected: D-97, the Q202 reference (MARGINAL) moved to F.Fab",
+    ("eib_2026-11-14", "B_Silkscreen.gbo"): "expected: D-97, the 8 bottom reference texts of top-side SMD parts "
+        "(C201, C202, R251, R252, R254, R271, U201, U202) removed; only the eight E landing labels remain",
 }
 
 
@@ -141,6 +149,10 @@ MASK_ROW = ("both sides; every via tented on both sides. The nine 0.3 mm through
             "(footprint pad 25, not vias) lie inside the 2.7 mm exposed-pad mask opening on F.Cu and are open there; "
             "they are tented on B.Mask only (D-69 paste windows keep >= 0.16 mm from the drills)"
             if B == "cr" else "both sides; every via tented on both sides")
+D97 = ("The 2026-11-17 round changes no copper, mask, paste or drill file: the silkscreen keeps only reference labels "
+       "that sit at their own parts and puts no label of a top-side SMD part on the bottom; the other parts are shown "
+       "in the assembly guide `assembly/guide/` (D-97), and the schematic is laid out in functional blocks with "
+       "operation notes at the comparators and gates (the netlist is unchanged).")
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
           "2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias "
           "are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64, re-placed in D-74 and "
@@ -153,7 +165,8 @@ STATUS = ("**Status: not ordered.** This package awaits operator review before o
           "(D-82). Phase C (2026-11-15) adds the E-pad numbers on F.Silkscreen beside the E pads and corrects the "
           "bottom E labels (E1 reads \"E1 JP12.1\"; 0.80 mm from the bottom references) (D-86). "
           "The tracks, vias, pads and zone outlines are those of `fab/eib_2026-11-13c/`; the F.Cu and B.Cu pour "
-          "fill differs at J201 (D-70) and F.Paste has no aperture on the DNP pads (D-71), section 6.\n\n"
+          "fill differs at J201 (D-70) and F.Paste has no aperture on the DNP pads (D-71), section 6. "
+          + D97 + "\n\n"
           if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
           "ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching "
@@ -170,17 +183,19 @@ STATUS = ("**Status: not ordered.** This package awaits operator review before o
           "(2026-11-15) labels the 20 AWG input pair: \"VIN1\" and the W1 reference beside W1 (/VCHGOUT, to EVM J1 "
           "pin 2), \"GND\" beside W2 (/GND, to EVM J1 pin 1) (D-85). The "
           "tracks, vias, pads and zone outlines are those of `fab/cr_2026-11-13f/`; the F.Cu pour fill differs within "
-          "1.7 mm of J1 pin 18 (D-75), section 5.\n\n")
+          "1.7 mm of J1 pin 18 (D-75), section 5. " + D97 + "\n\n")
 ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (TCKE1401NM, VQFN24D, 0.5 mm pitch, A.8 hand assembly row), or "
         "a PCB assembly service.\n"
-        "\nSeven references are on B.Silkscreen, mirrored, over their parts: C102a, C102c, C119, C131, R107, U107 and "
-        "U119 (D-78). They can be read only before the CR is plugged onto the MB. J1 pin 18 joins the F.Cu VCHG pour "
+        "\nThe silkscreen labels only the parts whose reference sits at the part. The other 62 top-side SMD parts are "
+        "shown, with reference and value, on the pages of `assembly/guide/` (`assembly/guide/README.md` lists each part "
+        "and its page; D-97). The bottom silkscreen carries only the J1 \"1\" mark. J1 pin 18 joins the F.Cu VCHG pour "
         "solidly (D-75), so its joint needs a higher iron setting or a larger tip and a longer dwell than pin 19.\n"
         "\nThe 20 AWG input pair is labelled on F.Silkscreen: W1 carries \"VIN1\" (/VCHGOUT, to EVM J1 pin 2, VIN1) and "
         "W2 carries \"GND\" (/GND, to EVM J1 pin 1) (D-85). A swapped pair shorts the U101 output at the EVM end.\n"
         if B == "cr" else
-        "\nThe references of C201, C202, R251, R252, R254, R271, U201 and U202 are on B.Silkscreen, mirrored, over their "
-        "parts, and on F.Fab (D-78). They can be read only before the EIB is mounted on its standoffs.\n"
+        "\nThe silkscreen labels only the parts whose reference sits at the part. The other 14 top-side SMD parts are "
+        "shown, with reference and value, on the pages of `assembly/guide/` (`assembly/guide/README.md` lists each part "
+        "and its page; D-97). No label of a top-side SMD part is on the bottom.\n"
         "\nThe E-pad landing labels (\"E8 TP49\" ... \"E6 DNP\"; E1 reads \"E1 JP12.1\", the square REGN post) are on "
         "B.Silkscreen only (D-73, D-86). The top side carries only the E-pad numbers beside the pads (\"E8\", \"E3\", "
         "\"4\", \"E2\", \"E7\", \"E1\", \"E5\", \"E6\"; D-86). Read the landing labels, or tag each E lead, before the "
@@ -242,7 +257,8 @@ txt = f"""# {INFO['name']}: fabrication package ({D})
 | `assembly/{B}-pos.csv` | pick-and-place, both sides, mm, DNP parts excluded |
 | `assembly/{B}-bom.csv` | grouped BOM with MPN, manufacturer and DNP columns |
 | `assembly/{B}_ibom.html` | InteractiveHtmlBom (open in a browser); DNP parts left out of the BOM table |
-| `docs/{B}-schematic.pdf` | schematic |
+| `assembly/guide/` | assembly guide (D-97): rendered top views that mark the parts without a silkscreen label at the part, with `README.md` (part, status, page) |
+| `docs/{B}-schematic.pdf` | schematic, laid out in functional blocks |
 | `docs/{B}-pcb.pdf` | one page per copper, silkscreen, fab and mask layer |
 | `docs/{B}.step` | 3D model |
 | `docs/{B}.net` | netlist exported from the schematic |

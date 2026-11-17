@@ -4,7 +4,7 @@
  "subtitle": "B.2: FC-charge EN tap T5 (FCC_TAP, R122 1k to net FCC); U119 FCC_OFF -> FCCN, U120 FCC_ON -> FCC_ON",
  "size": [
   152.4,
-  101.6
+  106.68
  ],
  "parts": {
   "U119": {
@@ -395,20 +395,68 @@
  ],
  "texts": [
   {
-   "text": "FCC_OFF (net FCCN)",
+   "text": "FCC_OFF (net FCCN): TLV3012B, push-pull",
    "at": [
-    101.6,
+    93.98,
     55.88
    ],
    "size": 1.524
   },
   {
-   "text": "FCC_ON",
+   "text": "FCCN = HIGH when IN+ (N_FOP) > IN- (N_FOM)",
    "at": [
-    101.6,
+    93.98,
+    58.42
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "N_FOP = REF119/3; N_FOM = FCC via R186",
+   "at": [
+    93.98,
+    60.96
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "i.e. FCCN HIGH when FCC < 0.374-0.436 V (r9-26)",
+   "at": [
+    93.98,
+    63.5
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "FCC_ON: TLV3012B, push-pull",
+   "at": [
+    93.98,
     88.9
    ],
    "size": 1.524
+  },
+  {
+   "text": "FCC_ON = HIGH when IN+ (N_FNP) > IN- (REF120)",
+   "at": [
+    93.98,
+    91.44
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "N_FNP = FCC x R189/(R188+R189)",
+   "at": [
+    93.98,
+    93.98
+   ],
+   "size": 1.27
+  },
+  {
+   "text": "i.e. FCC_ON HIGH when FCC > 1.732-1.880 V (r9-26)",
+   "at": [
+    93.98,
+    96.52
+   ],
+   "size": 1.27
   },
   {
    "text": "REF/3 divider",
@@ -421,8 +469,8 @@
   {
    "text": "T5 open: R187 vs R188+R189, FCC_OFF and FCC_ON both LOW",
    "at": [
-    66.04,
-    96.52
+    38.1,
+    101.6
    ],
    "size": 1.27
   }

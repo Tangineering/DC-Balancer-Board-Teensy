@@ -37,9 +37,12 @@ for fp in b.GetFootprints():
 rows = []
 for fp in b.GetFootprints():
     f, r = fp.Reference(), fp.GetReference()
-    if not f.IsVisible():
-        continue   # MH1-MH4 (D-60)
     lay = f.GetLayer()
+    if not f.IsVisible():
+        if lay == pcbnew.F_Fab and not r.startswith("MH"):
+            # moved off the silkscreen by gen/silk_no_bottom_smd.py or gen/assembly_guide.py apply (2026-11-17)
+            rows.append((r, "F.Fab", "-", "-", "-", "hidden; in the assembly guide (assembly_guide/cr/)"))
+        continue   # MH1-MH4 (D-60)
     if lay == pcbnew.F_Fab:
         rows.append((r, "F.Fab", "-", "-", "-", "no clear silkscreen position"))
         continue
@@ -64,7 +67,7 @@ def key(row):
 n = {k: sum(1 for x in rows if x[1] == k) for k in ("F.Silkscreen", "B.Silkscreen", "F.Fab")}
 with open(OUT, "w", encoding="utf-8", newline="\n") as fh:
     fh.write("# CR reference designators\n\n")
-    fh.write("This list gives the placement of every visible reference field on `cr/cr.kicad_pcb` (D-59). It is "
+    fh.write("This list gives the placement of every reference field on `cr/cr.kicad_pcb` (D-59). It is "
              "written by\n`gen/cr_silk_refs_report.py` from the board. The placement comes from `gen/silk_refs.py` "
              "(D-58), then\n`gen/cr_silk_refs_r2.py`, `gen/cr_wire_labels.py`, `gen/cr_lead_labels.py`, "
              "`gen/cr_silk_fix_r3.py`\n(update 2026-11-14) and `gen/cr_silk_fix_r4.py` (the W1 reference, phase C "
