@@ -219,6 +219,14 @@ to F.Fab only (the iBOM carries it). Labels of through-hole locations (lead pads
 bottom silkscreen, because both sides of a through-hole location are visible during assembly. In the charger EVM
 project, `hardware/charger_evm_r8/gen/silk_no_bottom_smd.py <board>` enforces the rule as the last in-place step.
 
+Assembly-guide rule (operator, 2026-11-17): the top silkscreen keeps only reference labels that sit at their own
+part. A top-side SMD part whose label is missing, more than 1.0 mm from its own pads, or nearer another part's pads
+than its own goes into rendered assembly-guide images instead (the part outlined on a top view and tagged with its
+reference and value). Labels of wired connections, holes and through-hole parts stay on the silkscreen, because they
+are used after assembly too. Charger EVM tool: `hardware/charger_evm_r8/gen/assembly_guide.py` (`dump`, `plot`,
+`apply`; output `assembly_guide/<board>/`). Do not spend placement effort on far or ambiguous labels: send them to
+the guide.
+
 1. Find the mechanical reasons for the present outline in the design record before you trim: an overhang that keys
    the board, a cover over parts below, a connector reach. Keep each such area as an `--ear` box (plan frame). A
    board that is keyed by landing on parts when it is turned the wrong way keeps the key only while its outline

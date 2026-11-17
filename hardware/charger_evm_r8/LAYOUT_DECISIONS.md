@@ -523,6 +523,32 @@ board (D-74, D-78). A reference with no legal top-side position goes onto B.Silk
 its F.Fab `${REFERENCE}` text stays: 7 CR references and 8 fitted EIB references (D-78). These bottom-side references
 can be read only before the CR is plugged onto the MB and before the EIB is mounted on its standoffs.
 
+**Amended 2026-11-17 (operator rulings; the D number is assigned by the design owner).** The bottom-side fallback
+above is withdrawn. The operator cannot see the bottom of a board while the top-side parts are assembled, so a
+top-side SMD part never has a B.Silkscreen label. In addition, the top silkscreen keeps only the reference labels
+that sit at their own parts. A top-side SMD part goes into the **assembly guide** instead of the silkscreen when one
+of these conditions is true:
+
+- the part has no visible top-side reference (NONE);
+- the label ink is more than 1.0 mm from the part's own pads, or nearer the pads of another part than its own
+  (MARGINAL).
+
+The assembly guide is a set of rendered top views, `assembly_guide/<board>/<board>_guide_<n>.png`, written by
+`gen/assembly_guide.py` (`dump` in the pcbnew venv, then `plot` in a Python with matplotlib). Each page outlines its
+parts on the board and tags each part with its reference and value. `assembly_guide/<board>/README.md` lists every
+top-side SMD part with its status and page. Labels of wired connections, holes and through-hole parts (references
+J, W, E, H, MH and TP, and parts with plated through-hole pads only) stay on the silkscreen on either side and are
+not in the guide, because they are also used after assembly. The board edit is
+`gen/assembly_guide.py apply <board>`, which moves the reference of every guide part to F.Fab (hidden) and removes
+the bottom-side texts of top-side SMD parts; `gen/silk_no_bottom_smd.py` does the bottom-side part only. The silk
+scripts `gen/cr_silk_refs_r2.py`, `gen/cr_silk_fix_r3.py` and `gen/eib_silk_refs_r2.py` no longer place a
+bottom-side reference (`BOTTOM_REFS = False`).
+
+State on 2026-11-17: the rulings and tools are in place, and the boards are not edited (the operator froze the
+design files, which carry hand-edits). On the current boards the guide holds 62 of the 69 CR top-side SMD parts
+(24 NONE, 38 MARGINAL) and 14 of the 37 EIB parts (13 NONE, 1 MARGINAL). The CR count is high because the D-74 and
+D-78 placement put most CR labels 2 to 3.5 mm from their parts.
+
 ### 5.3 Footprint interior, divider strip and tab Y (A.8)
 
 **D-13. Divider strip.** R109-R112, R114 and R115 (0.1 % dividers) lie inside the A.8 divider strip x 23.15-36.50,
