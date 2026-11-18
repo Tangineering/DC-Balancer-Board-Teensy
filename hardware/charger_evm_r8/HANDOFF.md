@@ -9,6 +9,12 @@ current boards in a recorded order (section 4, `LAYOUT_DECISIONS.md` section 2),
 in `gen/netlist.py` (D-82).) The D-58 routing plan is copied to `cr/routing_r9_notes/`, and `gen/pcbdiff.py` checks that a rebuilt
 board keeps the recorded edits.
 
+**PCB order (2026-11-17, current).** The operator ordered the CR and EIB boards from `export/2026-11-17/` (built
+from `3e5a2bd`; PCB files of `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/`), with the CR inner-pour hole clearance
+of 0.2545 mm as submitted (`DATASHEET_RECHECK_2026-11-17.md` S2). `LAYOUT_DECISIONS.md` section 1 holds the record. A
+board change from now on is a new revision; the ordered packages and the export folder stay as they are.
+(**Superseded 2026-11-17:** "nothing ordered" in the status block below.)
+
 **Status (2026-11-15, current: phase C of the 2026-11-14 round is applied in place; copper unchanged; packages
 written again on 2026-11-15; nothing ordered).** A second holistic review of the r9-25 records (findings R2-*) was
 answered in phase C. `LAYOUT_DECISIONS.md` D-85 to D-92 record every change, and
@@ -747,7 +753,7 @@ no outline trim, step 5 is new, and the old steps 5 to 7 are now 6 to 8.)
     passes both. Since D-77 it also runs `gen/npth_check.py` after DRC and stops on copper at an NPTH hole
     (`reports/npth_check.txt`). Since D-97 it also copies `assembly_guide/<board>/` into `assembly/guide/`. The
     current packages are `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/` (2026-11-17: D-97 silkscreen, block-layout
-    schematic; copper unchanged). (**Superseded 2026-11-17:** the next sentence.) The packages `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` were written on
+    schematic; copper unchanged), ordered on 2026-11-17 through `export/2026-11-17/`. (**Superseded 2026-11-17:** the next sentence.) The packages `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` were written on
     2026-11-15 by `bash gen/export.sh cr 2026-11-14` and `bash gen/export.sh eib 2026-11-14`, and written again in place
     on 2026-11-15 after D-85, D-86 and D-88 (D-90). (**Superseded
     2026-11-14, packages exported:** "The next packages are `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/`, to be

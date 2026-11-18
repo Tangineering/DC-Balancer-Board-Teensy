@@ -13,11 +13,18 @@ design names no other printed circuit board. The bond coupon of the E BOM is a s
 workshop. The FT1/FT2 feet and the B1R wedge are machined parts, and the EVM plate is a mechanical plate. None of
 these is a KiCad project.
 
+PCB order on 2026-11-17 (operator, chat: "The CR and EIB boards are ordered using the files from the export folder"):
+the CR and EIB boards are ordered from `export/2026-11-17/` (built from `3e5a2bd`; the PCB files are those of
+`fab/cr_2026-11-17/` and `fab/eib_2026-11-17/`). The CR boards therefore carry the inner-pour hole clearance of
+0.2545 mm (`DATASHEET_RECHECK_2026-11-17.md` S2) as submitted. The order quantities, the stencil order and the parts
+order are not recorded here. A later board change (for example the 0.30 mm inner-pour clearance of S2) is a new
+revision, not an edit of the ordered packages.
+
 Status on 2026-11-17: both schematics are laid out in functional blocks with operation notes at the comparators and
 gates (`gen/sch_blocks.py`, `gen/sch_layout/`; the KiCad netlist is identical, ERC 0, DRC schematic parity 0), and
 both boards carry the D-97 silkscreen (no bottom labels of top-side SMD parts; marginal and missing labels in the
-assembly guide). Copper is unchanged. The current packages are `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/` (not
-ordered); they supersede `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` in the table below.
+assembly guide). Copper is unchanged. The current packages are `fab/cr_2026-11-17/` and `fab/eib_2026-11-17/` (ordered
+2026-11-17, see above; **superseded 2026-11-17:** "not ordered"); they supersede `fab/cr_2026-11-14/` and `fab/eib_2026-11-14/` in the table below.
 
 Status on 2026-11-15 (phase C of the 2026-11-14 round):
 
